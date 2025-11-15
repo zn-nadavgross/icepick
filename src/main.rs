@@ -31,15 +31,23 @@ fn parse_s3_tables_arn(arn: &str) -> Result<(String, String)> {
 }
 
 /// Create REST catalog configured for S3 Tables
+///
+/// NOTE: This currently fails with 403 authentication errors because:
+/// - AWS S3 Tables requires SigV4 signing on all REST API requests
+/// - rust-iceberg REST catalog (v0.7.0) does not support SigV4 signing
+/// - RestCatalogBuilder.with_client() accepts only reqwest::Client (no middleware support)
+/// - reqwest::Client does not have request interceptor hooks
+///
+/// To make this work, rust-iceberg would need to:
+/// 1. Accept ClientWithMiddleware from reqwest-middleware, OR
+/// 2. Add built-in SigV4 support like Java's RESTSigV4Signer, OR
+/// 3. Add request interceptor hooks to the REST catalog
 async fn create_s3_tables_catalog(arn: &str, region: &str) -> Result<RestCatalog> {
     let rest_uri = format!("https://s3tables.{}.amazonaws.com/iceberg", region);
 
     let mut props = HashMap::new();
     props.insert(REST_CATALOG_PROP_URI.to_string(), rest_uri);
     props.insert(REST_CATALOG_PROP_WAREHOUSE.to_string(), arn.to_string());
-    props.insert("rest.sigv4-enabled".to_string(), "true".to_string());
-    props.insert("rest.signing-name".to_string(), "s3tables".to_string());
-    props.insert("rest.signing-region".to_string(), region.to_string());
 
     let catalog = RestCatalogBuilder::default()
         .load("s3tables", props)

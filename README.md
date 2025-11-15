@@ -1,6 +1,12 @@
 # Rust Iceberg + AWS S3 Tables PoC
 
-Minimal proof-of-concept validating that rust-iceberg works with AWS S3 Tables REST API.
+Proof-of-concept to validate rust-iceberg compatibility with AWS S3 Tables REST API.
+
+## ⚠️ POC Result: Incompatible
+
+**Finding:** rust-iceberg (v0.7.0) **cannot** currently work with AWS S3 Tables due to missing AWS SigV4 authentication support in the REST catalog client.
+
+See [Findings](#findings) below for details.
 
 ## Prerequisites
 
@@ -27,39 +33,78 @@ cargo run -- \
 6. Reads data back
 7. Prints both datasets for visual verification
 
-## Expected Output
+## Actual Output
 
 ```
 ✓ Connected to S3 Tables catalog
-✓ Created namespace: my_namespace
-✓ Created table: my_namespace.hello_table
-✓ Wrote 3 rows
-✓ Read 1 batches
+Error: Failed to create namespace
 
-Written data:
-+----+
-| id |
-+----+
-| 1  |
-| 2  |
-| 3  |
-+----+
-
-Read data:
-+----+
-| id |
-+----+
-| 1  |
-| 2  |
-| 3  |
-+----+
+Caused by:
+    Unexpected, context: { status: 403 Forbidden, headers: {..., "x-amzn-errortype": "MissingAuthenticationTokenException", ...}, json: {"message":"Missing Authentication Token"} }
 ```
+
+The catalog connection succeeds, but all subsequent operations fail with `403 Forbidden` because requests are not signed with AWS SigV4.
+
+## Findings
+
+### Why It Doesn't Work
+
+**Root Cause:** AWS S3 Tables requires AWS SigV4 signing on all REST API requests, but rust-iceberg's REST catalog client does not support request signing.
+
+**Technical Details:**
+
+1. **S3 Tables Requirement**
+   - Endpoint: `https://s3tables.{region}.amazonaws.com/iceberg`
+   - Authentication: AWS SigV4 with service name `s3tables`
+   - All requests must be signed (catalog operations, data I/O, etc.)
+
+2. **rust-iceberg Limitation**
+   - `RestCatalogBuilder.with_client()` accepts only `reqwest::Client`
+   - No built-in SigV4 support (unlike Java's `RESTSigV4Signer`)
+   - No request interceptor/middleware hooks
+   - Cannot use `reqwest-middleware::ClientWithMiddleware` (type mismatch)
+
+3. **Why Custom Signing Failed**
+   - `reqwest::Client` has no interceptor hooks for signing requests
+   - `reqwest-middleware` solves this but returns incompatible type
+   - `RestCatalogBuilder` doesn't accept middleware-wrapped clients
+
+### What Would Be Needed
+
+To make rust-iceberg work with S3 Tables, one of these changes is required:
+
+**Option 1:** Add built-in SigV4 support to iceberg-catalog-rest
+- Implement `AwsV4Signer` integration (using `reqsign` crate)
+- Add catalog config properties: `rest.sigv4-enabled`, `rest.signing-name`, `rest.signing-region`
+- Similar to Java implementation's `RESTSigV4Signer`
+
+**Option 2:** Support custom middleware clients
+- Change `with_client()` to accept `impl Into<ClientWithMiddleware>`
+- Allow users to provide pre-configured signed clients
+- Most flexible for different auth methods
+
+**Option 3:** Add request interceptor hooks
+- Add callback/trait for request modification before sending
+- Allow users to inject custom signing logic
+- More generic than Option 1
+
+### Current Workarounds
+
+**Use PyIceberg instead:**
+- Python's iceberg library supports S3 Tables with SigV4
+- Example: `Catalog.from_s3tables("arn:aws:s3tables:...")`
+- Confirmed working (see Daft integration)
+
+**Use Java Iceberg:**
+- `RESTSigV4Signer` provides full S3 Tables support
+- Production-ready implementation
 
 ## Known S3 Tables Limitations
 
+Beyond the authentication issue, S3 Tables has these documented limitations:
 - Limited schema evolution
 - No time travel/snapshots via REST
 - Partition evolution restrictions
 - Nested types may have limited support
 
-This PoC uses minimal features to avoid these limitations.
+This PoC was designed to avoid these limitations by using a minimal schema.

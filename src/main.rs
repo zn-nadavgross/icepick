@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, ensure};
 use iceberg::CatalogBuilder;
+use iceberg::spec::{Schema, NestedField, PrimitiveType, Type};
 use iceberg_catalog_rest::{RestCatalog, RestCatalogBuilder, REST_CATALOG_PROP_URI, REST_CATALOG_PROP_WAREHOUSE};
 use std::collections::HashMap;
 
@@ -39,6 +40,19 @@ async fn create_s3_tables_catalog(arn: &str, region: &str) -> Result<RestCatalog
     Ok(catalog)
 }
 
+/// Build simple schema: { id: i64 }
+fn build_schema() -> Result<Schema> {
+    let schema = Schema::builder()
+        .with_fields(vec![
+            NestedField::required(1, "id", Type::Primitive(PrimitiveType::Long))
+                .into()
+        ])
+        .build()
+        .context("Failed to build schema")?;
+
+    Ok(schema)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -59,6 +73,9 @@ async fn main() -> Result<()> {
         .context("Failed to connect to S3 Tables catalog")?;
 
     println!("✓ Connected to S3 Tables catalog");
+
+    let schema = build_schema()?;
+    println!("✓ Created schema with {} fields", schema.as_struct().fields().len());
 
     Ok(())
 }

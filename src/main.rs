@@ -18,9 +18,23 @@ fn parse_s3_tables_arn(arn: &str) -> Result<(String, String)> {
 }
 
 fn main() -> Result<()> {
-    // Test ARN parsing
-    let test_arn = "arn:aws:s3tables:us-west-2:123456789012:bucket/my-bucket";
-    let (region, bucket) = parse_s3_tables_arn(test_arn)?;
-    println!("Region: {}, Bucket: {}", region, bucket);
+    let args: Vec<String> = std::env::args().collect();
+    ensure!(
+        args.len() == 4,
+        "Usage: {} <s3-tables-arn> <namespace> <table-name>",
+        args[0]
+    );
+
+    let arn = &args[1];
+    let namespace_name = &args[2];
+    let table_name = &args[3];
+
+    println!("ARN: {}", arn);
+    println!("Namespace: {}", namespace_name);
+    println!("Table: {}", table_name);
+
+    let (region, bucket) = parse_s3_tables_arn(arn)?;
+    println!("Parsed - Region: {}, Bucket: {}", region, bucket);
+
     Ok(())
 }

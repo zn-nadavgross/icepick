@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, ensure};
-use iceberg::CatalogBuilder;
+use iceberg::{Catalog, CatalogBuilder};
 use iceberg::spec::{Schema, NestedField, PrimitiveType, Type};
+use iceberg::NamespaceIdent;
 use iceberg_catalog_rest::{RestCatalog, RestCatalogBuilder, REST_CATALOG_PROP_URI, REST_CATALOG_PROP_WAREHOUSE};
 use std::collections::HashMap;
 
@@ -63,16 +64,27 @@ async fn main() -> Result<()> {
     );
 
     let arn = &args[1];
-    let _namespace_name = &args[2];
+    let namespace_name = &args[2];
     let _table_name = &args[3];
 
     let (region, _bucket) = parse_s3_tables_arn(arn)?;
 
-    let _catalog = create_s3_tables_catalog(arn, &region)
+    let catalog = create_s3_tables_catalog(arn, &region)
         .await
         .context("Failed to connect to S3 Tables catalog")?;
 
     println!("✓ Connected to S3 Tables catalog");
+
+    let namespace = NamespaceIdent::new(namespace_name.clone());
+
+    // Try to create namespace (may already exist)
+    match catalog.create_namespace(&namespace, HashMap::new()).await {
+        Ok(_) => println!("✓ Created namespace: {}", namespace_name),
+        Err(e) if e.to_string().contains("already exists") => {
+            println!("✓ Namespace already exists: {}", namespace_name)
+        }
+        Err(e) => return Err(e).context("Failed to create namespace")?,
+    }
 
     let schema = build_schema()?;
     println!("✓ Created schema with {} fields", schema.as_struct().fields().len());

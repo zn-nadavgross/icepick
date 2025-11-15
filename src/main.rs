@@ -13,6 +13,8 @@ use parquet::file::properties::WriterProperties;
 use std::collections::HashMap;
 use futures::stream::StreamExt;
 
+mod s3tables;
+
 /// Parse S3 Tables ARN and extract region and bucket name
 /// ARN format: arn:aws:s3tables:region:account:bucket/name
 fn parse_s3_tables_arn(arn: &str) -> Result<(String, String)> {

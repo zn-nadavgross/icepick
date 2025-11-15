@@ -11,6 +11,7 @@ use iceberg::writer::{IcebergWriter, IcebergWriterBuilder};
 use iceberg_catalog_rest::{RestCatalog, RestCatalogBuilder, REST_CATALOG_PROP_URI, REST_CATALOG_PROP_WAREHOUSE};
 use parquet::file::properties::WriterProperties;
 use std::collections::HashMap;
+use futures::stream::StreamExt;
 
 /// Parse S3 Tables ARN and extract region and bucket name
 /// ARN format: arn:aws:s3tables:region:account:bucket/name
@@ -164,6 +165,24 @@ async fn main() -> Result<()> {
         .context("Failed to close writer")?;
 
     println!("✓ Wrote {} rows to {} data files", batch.num_rows(), data_files.len());
+
+    let scan = table
+        .scan()
+        .build()
+        .context("Failed to create table scan")?;
+
+    let mut stream = scan
+        .to_arrow()
+        .await
+        .context("Failed to create arrow stream")?;
+
+    let mut read_batches = Vec::new();
+    while let Some(batch_result) = stream.next().await {
+        let batch = batch_result.context("Failed to read batch")?;
+        read_batches.push(batch);
+    }
+
+    println!("✓ Read {} batches", read_batches.len());
 
     Ok(())
 }

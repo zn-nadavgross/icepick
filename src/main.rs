@@ -84,6 +84,15 @@ fn create_sample_data() -> Result<RecordBatch> {
     Ok(batch)
 }
 
+use arrow::util::pretty::print_batches;
+
+/// Print Arrow RecordBatch in pretty table format
+fn print_batch(batch: &RecordBatch) -> Result<()> {
+    print_batches(&[batch.clone()])
+        .context("Failed to print batch")?;
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -178,11 +187,19 @@ async fn main() -> Result<()> {
 
     let mut read_batches = Vec::new();
     while let Some(batch_result) = stream.next().await {
-        let batch = batch_result.context("Failed to read batch")?;
-        read_batches.push(batch);
+        let read_batch = batch_result.context("Failed to read batch")?;
+        read_batches.push(read_batch);
     }
 
     println!("✓ Read {} batches", read_batches.len());
+
+    println!("\nWritten data:");
+    print_batch(&batch)?;
+
+    println!("\nRead data:");
+    for read_batch in &read_batches {
+        print_batch(read_batch)?;
+    }
 
     Ok(())
 }

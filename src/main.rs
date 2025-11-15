@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, ensure};
-use iceberg::{Catalog, CatalogBuilder};
+use iceberg::{Catalog, CatalogBuilder, TableCreation};
 use iceberg::spec::{Schema, NestedField, PrimitiveType, Type};
 use iceberg::NamespaceIdent;
 use iceberg_catalog_rest::{RestCatalog, RestCatalogBuilder, REST_CATALOG_PROP_URI, REST_CATALOG_PROP_WAREHOUSE};
@@ -65,7 +65,7 @@ async fn main() -> Result<()> {
 
     let arn = &args[1];
     let namespace_name = &args[2];
-    let _table_name = &args[3];
+    let table_name = &args[3];
 
     let (region, _bucket) = parse_s3_tables_arn(arn)?;
 
@@ -87,7 +87,18 @@ async fn main() -> Result<()> {
     }
 
     let schema = build_schema()?;
-    println!("✓ Created schema with {} fields", schema.as_struct().fields().len());
+
+    let table_creation = TableCreation::builder()
+        .name(table_name.clone())
+        .schema(schema)
+        .build();
+
+    let _table = catalog
+        .create_table(&namespace, table_creation)
+        .await
+        .context(format!("Failed to create table '{}'", table_name))?;
+
+    println!("✓ Created table: {}.{}", namespace_name, table_name);
 
     Ok(())
 }

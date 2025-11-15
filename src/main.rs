@@ -1,8 +1,15 @@
 use anyhow::{Context, Result, ensure};
 use iceberg::{Catalog, CatalogBuilder, TableCreation};
-use iceberg::spec::{Schema, NestedField, PrimitiveType, Type};
+use iceberg::spec::{Schema, NestedField, PrimitiveType, Type, DataFileFormat};
 use iceberg::NamespaceIdent;
+use iceberg::writer::base_writer::data_file_writer::DataFileWriterBuilder;
+use iceberg::writer::file_writer::ParquetWriterBuilder;
+use iceberg::writer::file_writer::location_generator::{
+    DefaultFileNameGenerator, DefaultLocationGenerator,
+};
+use iceberg::writer::{IcebergWriter, IcebergWriterBuilder};
 use iceberg_catalog_rest::{RestCatalog, RestCatalogBuilder, REST_CATALOG_PROP_URI, REST_CATALOG_PROP_WAREHOUSE};
+use parquet::file::properties::WriterProperties;
 use std::collections::HashMap;
 
 /// Parse S3 Tables ARN and extract region and bucket name
@@ -54,6 +61,28 @@ fn build_schema() -> Result<Schema> {
     Ok(schema)
 }
 
+use arrow::array::Int64Array;
+use arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
+use arrow::record_batch::RecordBatch;
+use std::sync::Arc;
+
+/// Create sample data: [1, 2, 3]
+fn create_sample_data() -> Result<RecordBatch> {
+    let id_array = Int64Array::from(vec![1, 2, 3]);
+
+    let arrow_schema = ArrowSchema::new(vec![
+        Field::new("id", DataType::Int64, false)
+    ]);
+
+    let batch = RecordBatch::try_new(
+        Arc::new(arrow_schema),
+        vec![Arc::new(id_array)]
+    )
+    .context("Failed to create record batch")?;
+
+    Ok(batch)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -93,12 +122,48 @@ async fn main() -> Result<()> {
         .schema(schema)
         .build();
 
-    let _table = catalog
+    let table = catalog
         .create_table(&namespace, table_creation)
         .await
         .context(format!("Failed to create table '{}'", table_name))?;
 
     println!("✓ Created table: {}.{}", namespace_name, table_name);
+
+    let batch = create_sample_data()?;
+
+    // Set up location and file name generators
+    let location_generator = DefaultLocationGenerator::new(table.metadata().clone())
+        .context("Failed to create location generator")?;
+    let file_name_generator = DefaultFileNameGenerator::new(
+        "data".to_string(),
+        None,
+        DataFileFormat::Parquet,
+    );
+
+    // Create Parquet writer builder
+    let parquet_writer_builder = ParquetWriterBuilder::new(
+        WriterProperties::default(),
+        table.metadata().current_schema().clone(),
+        None,
+        table.file_io().clone(),
+        location_generator.clone(),
+        file_name_generator.clone(),
+    );
+
+    // Create data file writer
+    let data_file_writer_builder = DataFileWriterBuilder::new(parquet_writer_builder, None, 0);
+    let mut data_file_writer = data_file_writer_builder.build().await
+        .context("Failed to create data file writer")?;
+
+    // Write data
+    data_file_writer.write(batch.clone()).await
+        .context("Failed to write data")?;
+
+    // Close writer and retrieve data files
+    let data_files = data_file_writer.close().await
+        .context("Failed to close writer")?;
+
+    println!("✓ Wrote {} rows to {} data files", batch.num_rows(), data_files.len());
 
     Ok(())
 }

@@ -50,6 +50,7 @@ pub mod error;
 pub mod io;
 pub mod spec;
 mod table;
+mod transaction;
 
 // Re-export common types
 pub use error::{Error, Result};
@@ -59,6 +60,7 @@ pub use spec::{
     TableMetadata, Type,
 };
 pub use table::Table;
+pub use transaction::Transaction;
 
 // Re-export catalog types
 pub use catalog::r2::R2Catalog;

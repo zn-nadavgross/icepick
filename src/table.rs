@@ -2,6 +2,7 @@
 
 use crate::io::FileIO;
 use crate::spec::{Schema, TableIdent, TableMetadata};
+use crate::transaction::Transaction;
 
 /// An Iceberg table with integrated storage
 pub struct Table {
@@ -57,6 +58,11 @@ impl Table {
     #[allow(dead_code)]
     pub(crate) fn file_io(&self) -> &FileIO {
         &self.file_io
+    }
+
+    /// Start a new transaction for writing data
+    pub fn transaction(&self) -> Transaction<'_> {
+        Transaction::new(self)
     }
 }
 

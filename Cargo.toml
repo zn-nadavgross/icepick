@@ -18,6 +18,7 @@ percent-encoding = "2.3"
 uuid = { version = "1.0", features = ["v4", "serde"] }
 opendal = { version = "0.51", default-features = false, features = ["services-memory"] }
 apache-avro = "0.21"
+arrow = { version = "55.2.0", default-features = false, features = ["prettyprint"] }
 
 # AWS (non-WASM targets only)
 [target.'cfg(not(target_family = "wasm"))'.dependencies]

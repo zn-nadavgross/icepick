@@ -45,6 +45,7 @@
 //! # }
 //! ```
 
+pub mod arrow_convert;
 pub mod catalog;
 pub mod commit;
 pub mod error;

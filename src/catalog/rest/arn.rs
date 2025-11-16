@@ -66,3 +66,40 @@ pub fn parse_s3tables_arn(arn: &str) -> Result<(String, String)> {
 
     Ok((region, bucket_name))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_s3tables_arn_valid() {
+        let arn = "arn:aws:s3tables:us-west-2:123456789012:bucket/my-bucket";
+        let result = parse_s3tables_arn(arn);
+        assert!(result.is_ok());
+        let (region, bucket) = result.unwrap();
+        assert_eq!(region, "us-west-2");
+        assert_eq!(bucket, "my-bucket");
+    }
+
+    #[test]
+    fn test_parse_s3tables_arn_invalid_format() {
+        let arn = "invalid-arn";
+        let result = parse_s3tables_arn(arn);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), CatalogError::InvalidArn(_)));
+    }
+
+    #[test]
+    fn test_parse_s3tables_arn_wrong_service() {
+        let arn = "arn:aws:s3:us-west-2:123456789012:bucket/my-bucket";
+        let result = parse_s3tables_arn(arn);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_s3tables_arn_missing_bucket_prefix() {
+        let arn = "arn:aws:s3tables:us-west-2:123456789012:my-bucket";
+        let result = parse_s3tables_arn(arn);
+        assert!(result.is_err());
+    }
+}

@@ -1,43 +1,107 @@
-# Rust Iceberg + AWS S3 Tables PoC
+# Rust Iceberg Cloud Catalogs Library
 
-Proof-of-concept demonstrating rust-iceberg integration with AWS S3 Tables using custom SigV4 authentication.
+A Rust library providing rust-iceberg integration with cloud-based Iceberg catalogs:
+- **AWS S3 Tables** - using custom SigV4 authentication
+- **Cloudflare R2 Data Catalog** - using Bearer token authentication
 
-## ✅ POC Result: Working
+## Features
 
-**Finding:** rust-iceberg (v0.7.0) **can** work with AWS S3 Tables by implementing a custom catalog client with AWS SigV4 request signing.
+- **Pluggable Authentication**: `AuthProvider` trait for extensible authentication
+- **Multiple Cloud Providers**: Built-in support for S3 Tables and R2
+- **WASM Compatible**: Catalog code is WASM-ready (AWS dependencies conditionally compiled)
+- **Type-Safe**: Full Rust implementation of Iceberg REST catalog protocol
+
+## ✅ Status: Working
+
+rust-iceberg (v0.7.0) **works** with both AWS S3 Tables and Cloudflare R2 Data Catalog through a unified REST catalog with pluggable authentication.
 
 See [Implementation](#implementation) below for technical details.
 
-## Prerequisites
+## Library Usage
 
+Add this to your `Cargo.toml`:
+
+```toml
+[dependencies]
+hello-world-iceberg = { path = "path/to/hello-world-iceberg" }
+```
+
+Example usage:
+
+```rust
+use hello_world_iceberg::catalog::IcebergRestCatalog;
+use iceberg::Catalog;
+
+// AWS S3 Tables
+let catalog = IcebergRestCatalog::from_s3_tables_arn(
+    "my-catalog".to_string(),
+    "arn:aws:s3tables:us-west-2:123456789012:bucket/my-bucket"
+).await?;
+
+// Cloudflare R2
+let catalog = IcebergRestCatalog::from_r2(
+    "my-catalog".to_string(),
+    "account-id",
+    "bucket-name",
+    "api-token"
+).await?;
+
+// Use catalog with iceberg::Catalog trait
+let table = catalog.load_table(&table_ident).await?;
+```
+
+## Examples
+
+This repository includes working examples for both cloud providers.
+
+### Prerequisites
+
+**For AWS S3 Tables:**
 1. AWS credentials configured (via `~/.aws/credentials` or environment variables)
 2. S3 Tables bucket created via AWS console
 3. IAM permissions for `s3tables:*` operations
 
-## Usage
+**For Cloudflare R2:**
+1. R2 bucket created in Cloudflare dashboard
+2. API token with R2 read/write permissions
+3. Account ID from Cloudflare dashboard
+
+### Running Examples
+
+**AWS S3 Tables:**
 
 ```bash
-cargo run -- \
+cargo run --example s3_tables_example -- \
   arn:aws:s3tables:us-west-2:123456789012:bucket/my-bucket \
   my_namespace \
   hello_table
 ```
 
-## What it does
+**Cloudflare R2:**
 
-1. Parses S3 Tables ARN and extracts region
-2. Connects to S3 Tables catalog using custom client with SigV4 signing
-3. Creates namespace (if doesn't exist)
-4. Creates table with simple schema: `{ id: i64 }`
-5. Writes 3 rows: [1, 2, 3] to Parquet data files
-6. Commits data files as table snapshot via Transaction API
-7. Reads data back via table scan
-8. Prints both datasets for visual verification
+```bash
+cargo run --example r2_example -- \
+  <account-id> \
+  <bucket-name> \
+  <api-token> \
+  my_namespace \
+  hello_table
+```
+
+### What the examples do
+
+1. Connects to cloud catalog (S3 Tables with SigV4 or R2 with Bearer token)
+2. Creates namespace (if doesn't exist)
+3. Creates table with simple schema: `{ id: i64 }`
+4. Writes 3 rows: [1, 2, 3] to Parquet data files
+5. Commits data files as table snapshot via Transaction API
+6. Reads data back via table scan
+7. Prints both datasets for visual verification
 
 ## Expected Output
 
 ```
-✓ Connected to S3 Tables catalog
+✓ Connected to [S3 Tables/R2 Data] catalog
 ✓ Created namespace: my_namespace
 ✓ Created table: my_namespace.hello_table
 ✓ Wrote 3 rows to 1 data files
@@ -67,88 +131,113 @@ Read data:
 
 ### Architecture
 
-This PoC implements a custom Iceberg catalog client that wraps S3 Tables REST API calls with AWS SigV4 authentication:
+This PoC implements a unified Iceberg REST catalog with pluggable authentication to support multiple cloud providers:
 
 ```
 ┌─────────────────────────────────────────┐
-│ main.rs (application)                   │
+│ Application (main.rs, examples/)        │
 │ - Uses iceberg::Catalog trait           │
 └──────────────────┬──────────────────────┘
                    │
                    ▼
 ┌─────────────────────────────────────────┐
-│ s3tables::S3TablesCatalog               │
+│ catalog::IcebergRestCatalog             │
 │ - Implements iceberg::Catalog trait     │
-│ - Wraps S3TablesClient                  │
+│ - Manages HTTP client + AuthProvider    │
+│ - Factory methods for each cloud:       │
+│   • from_s3_tables_arn()                │
+│   • from_r2() / from_r2_config()        │
 └──────────────────┬──────────────────────┘
                    │
                    ▼
-┌─────────────────────────────────────────┐
-│ s3tables::S3TablesClient                │
-│ - Signs all HTTP requests with SigV4    │
-│ - Handles S3 Tables REST API specifics  │
-└─────────────────────────────────────────┘
+        ┌──────────┴──────────┐
+        │                     │
+        ▼                     ▼
+┌──────────────┐    ┌──────────────────┐
+│ SigV4Auth    │    │ BearerTokenAuth  │
+│ (S3 Tables)  │    │ (R2)             │
+│ - AWS SigV4  │    │ - Simple token   │
+│   signing    │    │   header         │
+└──────────────┘    └──────────────────┘
 ```
 
 ### Key Components
 
-**1. S3TablesClient** (`src/s3tables/client.rs`)
-- Low-level REST client for S3 Tables API
-- Signs every request with AWS SigV4 using `reqsign` crate
-- Implements Iceberg REST endpoints:
+**1. IcebergRestCatalog** (`src/catalog/rest/mod.rs`)
+- Implements `iceberg::Catalog` trait for cloud REST catalogs
+- Manages HTTP client and delegates authentication to `AuthProvider`
+- Handles Iceberg REST endpoints:
   - `POST /v1/namespaces` - Create namespace
   - `POST /v1/namespaces/{ns}/tables` - Create table
   - `GET /v1/namespaces/{ns}/tables/{table}` - Load table metadata
   - `POST /v1/namespaces/{ns}/tables/{table}` - Update table (commit snapshots)
+- Factory methods for different clouds:
+  - `from_s3_tables_arn()` - AWS S3 Tables with ARN parsing
+  - `from_r2()` / `from_r2_config()` - Cloudflare R2 with config
 
-**2. S3TablesCatalog** (`src/s3tables/catalog.rs`)
-- Implements `iceberg::Catalog` trait
-- Adapter between rust-iceberg and S3TablesClient
-- Handles conversion between iceberg types and S3 Tables REST payloads
-- Manages FileIO for S3 data access
+**2. AuthProvider Trait** (`src/catalog/mod.rs`)
+- Abstraction for request authentication
+- `async fn sign_request(&self, request: Request) -> Result<Request>`
+- Enables pluggable authentication for different cloud providers
 
-**3. AWS SigV4 Signing** (via `reqsign` crate)
+**3. SigV4AuthProvider** (`src/catalog/auth/sigv4.rs`)
+- AWS SigV4 signing for S3 Tables
 - Service: `s3tables`
 - Region: Extracted from S3 Tables ARN
 - Credentials: Loaded from AWS default credential chain
 - Request components signed: method, URI, headers, body
 
+**4. BearerTokenAuthProvider** (`src/catalog/auth/bearer.rs`)
+- Simple Bearer token authentication for Cloudflare R2
+- Adds `Authorization: Bearer <token>` header to requests
+- Token provided via R2 API token
+
 ### Technical Approach
 
-**Why Custom Client?**
+**Why Custom Catalog?**
 
-rust-iceberg's `RestCatalog` (v0.7.0) doesn't support SigV4:
+rust-iceberg's `RestCatalog` (v0.7.0) doesn't support cloud-specific authentication:
 - `RestCatalogBuilder.with_client()` accepts only `reqwest::Client`
 - No built-in request interceptor/middleware support
-- Cannot inject signing logic into existing catalog
+- Cannot inject custom signing logic (SigV4, Bearer tokens, etc.)
 
 **Solution:**
 
-Implement `Catalog` trait with custom HTTP layer:
-1. Parse S3 Tables ARN to extract region and endpoint
-2. Initialize `reqsign` with AWS credential provider
-3. Sign each HTTP request before sending:
+Implement `Catalog` trait with pluggable authentication layer:
+
+1. **Define AuthProvider trait** for request signing abstraction
+2. **Implement cloud-specific providers:**
+   - `SigV4AuthProvider` for AWS S3 Tables
+   - `BearerTokenAuthProvider` for Cloudflare R2
+3. **IcebergRestCatalog delegates authentication:**
    - Build `reqwest::Request` with method, URL, headers, body
-   - Convert to `http::Request` for signing
-   - Apply SigV4 signature to headers
-   - Rebuild `reqwest::Request` with signed headers
+   - Call `auth_provider.sign_request()` to inject credentials
    - Execute via `reqwest::Client`
-4. Handle responses with proper error mapping
+4. **Factory methods configure catalog for each cloud:**
+   - `from_s3_tables_arn()` - Parse ARN, load AWS credentials, use SigV4
+   - `from_r2()` - Use R2 endpoint, use Bearer token
+5. Handle responses with proper error mapping (403 auth, 404 not found, etc.)
 
 ### Dependencies
 
-Key additions to enable S3 Tables support:
-- `reqwest = "0.12"` - HTTP client
-- `reqsign = "0.18"` - AWS credential and signing framework
-- `reqsign-aws-v4 = "2.0"` - AWS SigV4 implementation
-- `reqsign-file-read-tokio = "2.0"` - Tokio filesystem for credential files
-- `reqsign-http-send-reqwest = "2.0"` - Reqwest integration for credential fetching
+Key additions to enable cloud catalog support:
+- `reqwest = "0.12"` - HTTP client for REST API calls
+- `thiserror = "2.0"` - Error type definitions
 - `serde_json = "1.0"` - REST payload serialization
+- `percent-encoding = "2.3"` - URL encoding for ARNs
+
+**For AWS S3 Tables (conditional on non-WASM targets):**
+- `aws-sigv4 = "1.3"` - AWS SigV4 signing
+- `aws-credential-types = "1.2"` - AWS credential types
+- `aws-config = "1.8"` - AWS SDK configuration
+- `aws-sdk-sts = "1.55"` - AWS STS for credential management
 
 Removed:
-- `iceberg-catalog-rest = "0.7.0"` - Replaced by custom implementation
+- Old `s3tables` module - Replaced by unified `catalog` module with pluggable auth
 
-## Known S3 Tables Limitations
+## Known Limitations
+
+### AWS S3 Tables
 
 S3 Tables has these documented API limitations (as of 2025):
 - Limited schema evolution capabilities
@@ -157,34 +246,42 @@ S3 Tables has these documented API limitations (as of 2025):
 - Partition evolution restrictions
 - Time travel may have limited support
 
-This PoC uses a minimal schema and basic operations to avoid these limitations.
+### Cloudflare R2
+
+R2 Data Catalog is currently in beta:
+- Check Cloudflare documentation for current API limitations
+- Some Iceberg features may have limited support
+
+This PoC uses a minimal schema and basic operations to work within these constraints.
 
 ## Future Improvements
 
 **Potential rust-iceberg Contributions:**
 
-1. **Add SigV4 support to `iceberg-catalog-rest`**
-   - Integrate `reqsign` for AWS credential management
-   - Add catalog config: `rest.sigv4-enabled`, `rest.signing-name`, `rest.signing-region`
-   - Similar to Java's `RESTSigV4Signer` implementation
+1. **Add pluggable authentication to `iceberg-catalog-rest`**
+   - Introduce `AuthProvider` trait in upstream rust-iceberg
+   - Provide built-in implementations: SigV4, Bearer token, OAuth
+   - Add catalog config: `rest.auth-type`, `rest.auth-*` parameters
+   - Similar to Java's authentication framework
 
 2. **Support request middleware**
    - Accept `reqwest_middleware::ClientWithMiddleware` in `RestCatalogBuilder`
    - Enable users to inject custom auth/signing logic
-   - More flexible than built-in SigV4
+   - More flexible than built-in auth providers
 
-3. **Formalize S3 Tables catalog**
-   - Package `s3tables` module as `iceberg-catalog-s3tables` crate
+3. **Formalize cloud catalog implementations**
+   - Package as separate crates: `iceberg-catalog-s3tables`, `iceberg-catalog-r2`
    - Add to official rust-iceberg catalog implementations
    - Maintain alongside REST, Hive, Glue catalogs
 
 **Production Readiness Gaps:**
 
-- Error handling: More specific error types
-- Retry logic: Exponential backoff on transient failures
-- Testing: Integration tests against S3 Tables
+- Error handling: More specific error types, better error messages
+- Retry logic: Exponential backoff on transient failures (429, 503)
+- Testing: Integration tests against real S3 Tables and R2 endpoints
 - Performance: Connection pooling, request batching
-- Monitoring: Metrics, tracing integration
+- Monitoring: Metrics, tracing integration (OpenTelemetry)
+- WASM support: Full browser compatibility (currently blocked by arrow/parquet C deps)
 
 ## Development Workflow
 

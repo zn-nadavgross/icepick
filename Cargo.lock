@@ -1586,6 +1586,7 @@ dependencies = [
  "aws-credential-types",
  "aws-sdk-sts",
  "aws-sigv4",
+ "bytes",
  "dotenvy",
  "flate2",
  "futures",

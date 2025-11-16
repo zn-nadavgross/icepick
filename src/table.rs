@@ -1,6 +1,9 @@
 //! Iceberg table representation
 
+use crate::error::Result;
 use crate::io::FileIO;
+use crate::reader::{DataFileEntry, ManifestListReader, ManifestReader};
+use crate::scan::TableScanBuilder;
 use crate::spec::{Schema, Snapshot, TableIdent, TableMetadata};
 use crate::transaction::Transaction;
 
@@ -67,6 +70,38 @@ impl Table {
     /// Start a new transaction for writing data
     pub fn transaction(&self) -> Transaction<'_> {
         Transaction::new(self)
+    }
+
+    /// List all data files in the current snapshot
+    ///
+    /// Returns a list of data file entries discovered from the manifest files.
+    /// This is a simplified version that reads all data files without filtering.
+    pub async fn files(&self) -> Result<Vec<DataFileEntry>> {
+        // Get current snapshot
+        let snapshot = self
+            .current_snapshot()
+            .ok_or_else(|| crate::error::Error::invalid_input("Table has no current snapshot"))?;
+
+        // Read manifest list to get manifest file paths
+        let manifest_paths =
+            ManifestListReader::read(&self.file_io, snapshot.manifest_list()).await?;
+
+        // Read each manifest and collect data files
+        let mut all_files = Vec::new();
+        for manifest_path in manifest_paths {
+            let files = ManifestReader::read(&self.file_io, &manifest_path).await?;
+            all_files.extend(files);
+        }
+
+        Ok(all_files)
+    }
+
+    /// Create a table scan builder for reading data
+    ///
+    /// Returns a builder that can be used to configure and execute a scan.
+    /// For the MVP, this provides basic sequential reading without filtering.
+    pub fn scan(&self) -> TableScanBuilder<'_> {
+        TableScanBuilder::new(self)
     }
 }
 

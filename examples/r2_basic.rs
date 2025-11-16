@@ -170,7 +170,45 @@ async fn main() -> Result<()> {
         .context("Failed to commit transaction")?;
 
     println!("✓ Committed snapshot to table");
-    println!("\nNote: Reading data back is not yet supported in icepick");
+
+    // Read data back
+    println!("\n--- Reading data back ---");
+
+    // Reload table to get latest metadata
+    let table = catalog.load_table(&table_ident).await?;
+
+    // List data files
+    let files = table.files().await?;
+    println!("✓ Found {} data file(s)", files.len());
+    for file in &files {
+        println!(
+            "  - {} ({} records, {} bytes)",
+            file.file_path, file.record_count, file.file_size_in_bytes
+        );
+    }
+
+    // Scan and read data
+    let scan = table.scan().build()?;
+    let mut stream = scan.to_arrow().await?;
+
+    use futures::StreamExt;
+
+    let mut total_rows = 0;
+    println!("\nReading batches:");
+    while let Some(batch_result) = stream.next().await {
+        let batch = batch_result?;
+        total_rows += batch.num_rows();
+        println!("  Batch: {} rows", batch.num_rows());
+
+        // Print the first batch as a sample
+        if total_rows == batch.num_rows() {
+            use arrow::util::pretty::print_batches;
+            println!("\nSample data:");
+            print_batches(&[batch])?;
+        }
+    }
+
+    println!("\n✓ Read {} total rows", total_rows);
 
     Ok(())
 }

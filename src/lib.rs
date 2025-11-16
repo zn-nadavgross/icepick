@@ -53,6 +53,8 @@ pub mod commit;
 pub mod error;
 pub mod io;
 pub mod manifest;
+pub mod reader;
+pub mod scan;
 pub mod spec;
 pub mod table;
 pub mod transaction;
@@ -61,6 +63,8 @@ pub mod writer;
 // Re-export common types
 pub use error::{Error, Result};
 pub use io::FileIO;
+pub use reader::DataFileEntry;
+pub use scan::{ArrowRecordBatchStream, TableScan, TableScanBuilder};
 pub use spec::{
     DataContentType, DataFile, NamespaceIdent, NestedField, PrimitiveType, Schema, Snapshot,
     StructType, Summary, TableIdent, TableMetadata, Type,

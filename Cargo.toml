@@ -17,6 +17,8 @@ apache-avro = "0.21"
 arrow = { version = "55.2.0", default-features = false, features = ["prettyprint"] }
 parquet = { version = "55.2.0", default-features = false, features = ["arrow"] }
 flate2 = "1.1.5"
+futures = "0.3"
+bytes = "1.0"
 
 # Non-WASM targets (native platforms)
 [target.'cfg(not(target_family = "wasm"))'.dependencies]

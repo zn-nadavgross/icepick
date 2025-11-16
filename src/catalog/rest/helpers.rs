@@ -1,34 +1,26 @@
 use crate::catalog::CatalogError;
-use iceberg::spec::TableMetadata;
-use iceberg::table::Table;
-use iceberg::{Error as IcebergError, ErrorKind, Result as IcebergResult, TableIdent};
+use crate::error::{Error, Result};
+use crate::spec::{TableIdent, TableMetadata};
+use crate::table::Table;
 
-pub fn to_iceberg_error(e: CatalogError) -> IcebergError {
+pub fn from_catalog_error(e: CatalogError) -> Error {
     match e {
-        CatalogError::NotFound(msg) => IcebergError::new(ErrorKind::DataInvalid, msg),
-        CatalogError::Conflict(msg) => IcebergError::new(ErrorKind::DataInvalid, msg),
-        CatalogError::InvalidRequest(msg) => IcebergError::new(ErrorKind::DataInvalid, msg),
-        CatalogError::AuthError(msg) => IcebergError::new(ErrorKind::Unexpected, msg),
-        CatalogError::HttpError(msg) => IcebergError::new(ErrorKind::Unexpected, msg),
-        CatalogError::InvalidArn(msg) => IcebergError::new(ErrorKind::DataInvalid, msg),
-        CatalogError::Unexpected(msg) => IcebergError::new(ErrorKind::Unexpected, msg),
+        CatalogError::NotFound(msg) => Error::not_found(msg),
+        CatalogError::Conflict(msg) => Error::concurrent_modification(msg),
+        CatalogError::InvalidRequest(msg) => Error::invalid_input(msg),
+        CatalogError::AuthError(msg) => Error::unexpected(msg),
+        CatalogError::HttpError(msg) => Error::io_error(msg),
+        #[cfg(not(target_family = "wasm"))]
+        CatalogError::InvalidArn(msg) => Error::invalid_input(msg),
+        CatalogError::Unexpected(msg) => Error::unexpected(msg),
     }
 }
 
 pub fn build_table(
     ident: TableIdent,
     metadata: TableMetadata,
-    file_io: iceberg::io::FileIO,
-) -> IcebergResult<Table> {
-    let metadata_location = format!(
-        "{}/metadata/00000-initial.metadata.json",
-        metadata.location()
-    );
-
-    Table::builder()
-        .identifier(ident)
-        .metadata(metadata)
-        .metadata_location(metadata_location)
-        .file_io(file_io)
-        .build()
+    metadata_location: String,
+    file_io: crate::io::FileIO,
+) -> Result<Table> {
+    Ok(Table::new(ident, metadata, metadata_location, file_io))
 }

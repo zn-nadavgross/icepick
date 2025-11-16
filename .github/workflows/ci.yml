@@ -16,7 +16,7 @@ jobs:
     name: Test on Linux
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -57,15 +57,12 @@ jobs:
         run: cargo doc --no-deps --all-features
 
   # WASM build to verify R2Catalog compiles for browser/Workers
-  # NOTE: Currently fails due to iceberg-rust v0.7.0 lacking WASM support (tokio limitations)
-  # This job serves as a canary - it will start passing once iceberg-rust adds WASM support
+  # Uses conditional compilation to remove Send bounds on WASM (single-threaded)
   test-wasm:
-    if: false
-    name: Test WASM Build (Expected to fail until iceberg-rust adds WASM support)
+    name: Test WASM Build
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -93,21 +90,12 @@ jobs:
       - name: Build for WASM
         run: cargo build --target wasm32-unknown-unknown --verbose
 
-      - name: Verify R2Catalog compiles for WASM
-        run: |
-          cargo build --target wasm32-unknown-unknown --lib --verbose 2>&1 | tee build.log
-          if grep -i "error" build.log; then
-            echo "Build errors found"
-            exit 1
-          fi
-          echo "WASM build successful - R2Catalog is WASM-compatible"
-
   # Additional security and dependency checks
   security:
     name: Security Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable

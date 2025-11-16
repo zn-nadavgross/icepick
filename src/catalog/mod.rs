@@ -7,6 +7,11 @@ pub(crate) mod rest;
 #[cfg(not(target_family = "wasm"))]
 pub mod s3_tables;
 
+// New trait-based API
+mod catalog_trait;
+
+pub use catalog_trait::Catalog;
+
 // Make auth providers internal - not part of public API
 pub(crate) use auth::BearerTokenAuthProvider;
 
@@ -36,6 +41,7 @@ pub(crate) enum CatalogError {
     #[error("HTTP error: {0}")]
     HttpError(String),
 
+    #[cfg(not(target_family = "wasm"))]
     #[error("Invalid ARN: {0}")]
     InvalidArn(String),
 

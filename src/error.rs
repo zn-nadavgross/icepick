@@ -37,7 +37,8 @@ pub enum Error {
         source: reqwest::Error,
     },
 
-    /// Invalid ARN format
+    /// Invalid ARN format (native platforms only)
+    #[cfg(not(target_family = "wasm"))]
     #[error("Invalid ARN: {arn}")]
     InvalidArn { arn: String },
 
@@ -55,6 +56,18 @@ pub enum Error {
     /// Unexpected error
     #[error("Unexpected error: {message}")]
     Unexpected { message: String },
+
+    /// Invalid input (validation error)
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+
+    /// I/O error
+    #[error("I/O error: {0}")]
+    IoError(String),
+
+    /// Concurrent modification detected (optimistic locking failure)
+    #[error("Concurrent modification detected: {message}")]
+    ConcurrentModification { message: String },
 }
 
 impl Error {
@@ -101,7 +114,8 @@ impl Error {
         }
     }
 
-    /// Create an InvalidArn error
+    /// Create an InvalidArn error (native platforms only)
+    #[cfg(not(target_family = "wasm"))]
     pub fn invalid_arn(arn: impl Into<String>) -> Self {
         Self::InvalidArn { arn: arn.into() }
     }
@@ -119,48 +133,22 @@ impl Error {
             message: message.into(),
         }
     }
-}
 
-// Conversion to iceberg::Error for compatibility with iceberg::Catalog trait
-impl From<Error> for iceberg::Error {
-    fn from(err: Error) -> Self {
-        match err {
-            Error::NotFound { resource } => {
-                iceberg::Error::new(iceberg::ErrorKind::DataInvalid, resource)
-            }
-            Error::Unauthorized { provider } => {
-                iceberg::Error::new(iceberg::ErrorKind::Unexpected, provider)
-            }
-            Error::Forbidden { resource } => {
-                iceberg::Error::new(iceberg::ErrorKind::Unexpected, resource)
-            }
-            Error::Conflict { message } => {
-                iceberg::Error::new(iceberg::ErrorKind::DataInvalid, message)
-            }
-            Error::InvalidRequest { message } => {
-                iceberg::Error::new(iceberg::ErrorKind::DataInvalid, message)
-            }
-            Error::ServerError { status, message } => iceberg::Error::new(
-                iceberg::ErrorKind::Unexpected,
-                format!("Server error {}: {}", status, message),
-            ),
-            Error::NetworkError { source } => {
-                iceberg::Error::new(iceberg::ErrorKind::Unexpected, source.to_string())
-            }
-            Error::InvalidArn { arn } => iceberg::Error::new(
-                iceberg::ErrorKind::DataInvalid,
-                format!("Invalid ARN: {}", arn),
-            ),
-            Error::InvalidConfig { message } => {
-                iceberg::Error::new(iceberg::ErrorKind::DataInvalid, message)
-            }
-            Error::JsonError { source } => {
-                iceberg::Error::new(iceberg::ErrorKind::Unexpected, source.to_string())
-            }
-            Error::Unexpected { message } => {
-                iceberg::Error::new(iceberg::ErrorKind::Unexpected, message)
-            }
+    /// Create a ConcurrentModification error
+    pub fn concurrent_modification(message: impl Into<String>) -> Self {
+        Self::ConcurrentModification {
+            message: message.into(),
         }
+    }
+
+    /// Create an InvalidInput error
+    pub fn invalid_input(message: impl Into<String>) -> Self {
+        Self::InvalidInput(message.into())
+    }
+
+    /// Create an IoError
+    pub fn io_error(message: impl Into<String>) -> Self {
+        Self::IoError(message.into())
     }
 }
 
@@ -180,8 +168,11 @@ mod tests {
         let err = Error::forbidden("namespace1");
         assert!(matches!(err, Error::Forbidden { .. }));
 
-        let err = Error::invalid_arn("bad-arn");
-        assert!(matches!(err, Error::InvalidArn { .. }));
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let err = Error::invalid_arn("bad-arn");
+            assert!(matches!(err, Error::InvalidArn { .. }));
+        }
     }
 
     #[test]
@@ -191,5 +182,15 @@ mod tests {
 
         let err = Error::conflict("Resource already exists");
         assert_eq!(err.to_string(), "Conflict: Resource already exists");
+    }
+
+    #[test]
+    fn test_concurrent_modification_error() {
+        let err = Error::concurrent_modification("expected v2, found v3");
+        assert!(matches!(err, Error::ConcurrentModification { .. }));
+        assert_eq!(
+            err.to_string(),
+            "Concurrent modification detected: expected v2, found v3"
+        );
     }
 }

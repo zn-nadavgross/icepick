@@ -1,5 +1,5 @@
-use iceberg::spec::{Schema, TableMetadata};
-use iceberg::{TableRequirement, TableUpdate};
+use super::commit_types::{TableRequirement, TableUpdate};
+use crate::spec::{Schema, TableMetadata};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -21,14 +21,16 @@ pub struct CreateNamespaceResponse {
 pub struct CreateTableRequest {
     pub name: String,
     pub schema: Schema,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub location: Option<String>,
-    #[serde(rename = "partition-spec")]
-    pub partition_spec: serde_json::Value,
-    #[serde(rename = "write-order")]
-    pub write_order: serde_json::Value,
-    pub properties: HashMap<String, String>,
-    #[serde(rename = "stage-create")]
-    pub stage_create: bool,
+    #[serde(rename = "partition-spec", skip_serializing_if = "Option::is_none")]
+    pub partition_spec: Option<serde_json::Value>,
+    #[serde(rename = "write-order", skip_serializing_if = "Option::is_none")]
+    pub write_order: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub properties: Option<HashMap<String, String>>,
+    #[serde(rename = "stage-create", skip_serializing_if = "Option::is_none")]
+    pub stage_create: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -41,12 +43,14 @@ pub struct CreateTableResponse {
 
 pub type LoadTableResponse = CreateTableResponse;
 
+#[allow(dead_code)]
 #[derive(Serialize)]
 pub struct UpdateTableRequest {
     pub requirements: Vec<TableRequirement>,
     pub updates: Vec<TableUpdate>,
 }
 
+#[allow(dead_code)]
 pub type UpdateTableResponse = CreateTableResponse;
 
 #[derive(Deserialize, Debug)]

@@ -80,12 +80,68 @@ pub struct MapType {
     value_type: Box<Type>,
 }
 
-/// Placeholder for nested field (will implement in next task)
+/// A field in a struct type
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NestedField {
     id: i32,
     name: String,
     required: bool,
+    #[serde(rename = "type")]
     field_type: Type,
+    #[serde(skip_serializing_if = "Option::is_none")]
     doc: Option<String>,
+}
+
+impl NestedField {
+    /// Create a new nested field
+    pub fn new(
+        id: i32,
+        name: String,
+        field_type: Type,
+        required: bool,
+        doc: Option<String>,
+    ) -> Self {
+        Self {
+            id,
+            name,
+            required,
+            field_type,
+            doc,
+        }
+    }
+
+    /// Create a required field
+    pub fn required_field(id: i32, name: String, field_type: Type) -> Self {
+        Self::new(id, name, field_type, true, None)
+    }
+
+    /// Create an optional field
+    pub fn optional_field(id: i32, name: String, field_type: Type) -> Self {
+        Self::new(id, name, field_type, false, None)
+    }
+
+    /// Get field ID
+    pub fn id(&self) -> i32 {
+        self.id
+    }
+
+    /// Get field name
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Check if field is required
+    pub fn is_required(&self) -> bool {
+        self.required
+    }
+
+    /// Get field type
+    pub fn field_type(&self) -> &Type {
+        &self.field_type
+    }
+
+    /// Get field documentation
+    pub fn doc(&self) -> Option<&str> {
+        self.doc.as_deref()
+    }
 }

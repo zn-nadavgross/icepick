@@ -5,7 +5,8 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 
 use crate::error::Result;
-use crate::spec::{NamespaceIdent, TableIdent};
+use crate::spec::{NamespaceIdent, TableCreation, TableIdent};
+use crate::table::Table;
 
 /// Core catalog operations for Iceberg tables
 #[async_trait]
@@ -25,6 +26,16 @@ pub trait Catalog: Send + Sync {
 
     /// Check if a table exists
     async fn table_exists(&self, identifier: &TableIdent) -> Result<bool>;
+
+    /// Create a new table
+    async fn create_table(
+        &self,
+        namespace: &NamespaceIdent,
+        creation: TableCreation,
+    ) -> Result<Table>;
+
+    /// Load an existing table
+    async fn load_table(&self, identifier: &TableIdent) -> Result<Table>;
 
     /// Delete a table
     async fn drop_table(&self, identifier: &TableIdent) -> Result<()>;

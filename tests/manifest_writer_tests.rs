@@ -1,5 +1,5 @@
 use icepick::io::FileIO;
-use icepick::manifest::writer::write_manifest;
+use icepick::manifest::writer::{write_manifest, write_manifest_list};
 use icepick::spec::DataFile;
 use opendal::Operator;
 
@@ -25,5 +25,34 @@ async fn test_write_manifest() {
 
     // Verify file exists
     let exists = op.exists(path).await.unwrap();
+    assert!(exists);
+}
+
+#[tokio::test]
+async fn test_write_manifest_list() {
+    let op = Operator::via_iter(opendal::Scheme::Memory, []).unwrap();
+    let file_io = FileIO::new(op.clone());
+
+    let manifest_path = "metadata/test-m0.avro";
+    let manifest_length = 1000;
+    let added_files_count = 5;
+    let added_rows_count = 500;
+
+    let list_path = "metadata/snap-1-1-test.avro";
+    write_manifest_list(
+        &file_io,
+        list_path,
+        manifest_path,
+        manifest_length,
+        1, // snapshot_id
+        1, // sequence_number
+        added_files_count,
+        added_rows_count,
+    )
+    .await
+    .unwrap();
+
+    // Verify file exists
+    let exists = op.exists(list_path).await.unwrap();
     assert!(exists);
 }

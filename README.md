@@ -108,3 +108,34 @@ Beyond the authentication issue, S3 Tables has these documented limitations:
 - Nested types may have limited support
 
 This PoC was designed to avoid these limitations by using a minimal schema.
+
+## Development Workflow
+
+### Git Hooks + Tooling
+
+All Git hooks are managed through [`pre-commit`](https://pre-commit.com/) so you never have to install Python packages globally. The repo assumes you are using [Astral's `uv`](https://github.com/astral-sh/uv); run the installer via `uvx` (or the shorter `ux` alias if you have it configured) and let it bootstrap both the `pre-commit` binary and the hook environments:
+
+```bash
+# Install the pre-commit client + hook wrappers
+uvx pre-commit install --hook-type pre-commit --hook-type pre-push --hook-type commit-msg
+
+# Optional: run everything against the whole tree
+uvx pre-commit run --all-files
+```
+
+The configured hooks cover these checks:
+
+- Source hygiene: whitespace cleanup, EOF newlines, and preventing 5MB+ blobs
+- `cargo fmt`, `cargo clippy --locked --all-targets --all-features -D warnings`, and `cargo test --locked --all-features` (tests run on `pre-push`)
+- `scripts/enforce_quality.py` which enforces a per-file 400 LOC and complexity score of 60 by looking at control-flow keywords; tune via `MAX_LOC_PER_FILE` / `MAX_COMPLEXITY_SCORE`
+- Conventional commit messages through `compilerla/conventional-pre-commit`
+
+You can run the quality script directly if you want a quick readout:
+
+```bash
+python scripts/enforce_quality.py
+# or specify tighter limits
+python scripts/enforce_quality.py --max-loc 250 --max-complexity 45
+```
+
+These defaults should keep this small PoC tidy; adjust the thresholds as the codebase grows, but keep the hook steps in CI to prevent regressions.

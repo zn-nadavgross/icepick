@@ -14,7 +14,11 @@ futures = "0.3"
 
 # Add new
 reqwest = { version = "0.12", features = ["json"] }
-reqsign = "0.18"
+reqsign = { version = "0.18", features = ["aws"] }
+reqsign-aws-v4 = "2.0"
+reqsign-file-read-tokio = "2.0"
+reqsign-http-send-reqwest = "2.0"
+http = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 async-trait = "0.1"

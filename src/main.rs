@@ -1,17 +1,19 @@
-use anyhow::{Context, Result, ensure};
-use iceberg::{Catalog, CatalogBuilder, TableCreation};
-use iceberg::spec::{Schema, NestedField, PrimitiveType, Type, DataFileFormat};
-use iceberg::NamespaceIdent;
+use anyhow::{ensure, Context, Result};
+use futures::stream::StreamExt;
+use iceberg::spec::{DataFileFormat, NestedField, PrimitiveType, Schema, Type};
 use iceberg::writer::base_writer::data_file_writer::DataFileWriterBuilder;
-use iceberg::writer::file_writer::ParquetWriterBuilder;
 use iceberg::writer::file_writer::location_generator::{
     DefaultFileNameGenerator, DefaultLocationGenerator,
 };
+use iceberg::writer::file_writer::ParquetWriterBuilder;
 use iceberg::writer::{IcebergWriter, IcebergWriterBuilder};
-use iceberg_catalog_rest::{RestCatalog, RestCatalogBuilder, REST_CATALOG_PROP_URI, REST_CATALOG_PROP_WAREHOUSE};
+use iceberg::NamespaceIdent;
+use iceberg::{Catalog, CatalogBuilder, TableCreation};
+use iceberg_catalog_rest::{
+    RestCatalog, RestCatalogBuilder, REST_CATALOG_PROP_URI, REST_CATALOG_PROP_WAREHOUSE,
+};
 use parquet::file::properties::WriterProperties;
 use std::collections::HashMap;
-use futures::stream::StreamExt;
 
 mod s3tables;
 
@@ -19,7 +21,10 @@ mod s3tables;
 /// ARN format: arn:aws:s3tables:region:account:bucket/name
 fn parse_s3_tables_arn(arn: &str) -> Result<(String, String)> {
     let parts: Vec<&str> = arn.split(':').collect();
-    ensure!(parts.len() == 6, "Invalid S3 Tables ARN format: expected 6 parts");
+    ensure!(
+        parts.len() == 6,
+        "Invalid S3 Tables ARN format: expected 6 parts"
+    );
     ensure!(parts[0] == "arn", "ARN must start with 'arn'");
     ensure!(parts[2] == "s3tables", "Not an S3 Tables ARN");
 
@@ -62,10 +67,12 @@ async fn create_s3_tables_catalog(arn: &str, region: &str) -> Result<RestCatalog
 /// Build simple schema: { id: i64 }
 fn build_schema() -> Result<Schema> {
     let schema = Schema::builder()
-        .with_fields(vec![
-            NestedField::required(1, "id", Type::Primitive(PrimitiveType::Long))
-                .into()
-        ])
+        .with_fields(vec![NestedField::required(
+            1,
+            "id",
+            Type::Primitive(PrimitiveType::Long),
+        )
+        .into()])
         .build()
         .context("Failed to build schema")?;
 
@@ -81,15 +88,10 @@ use std::sync::Arc;
 fn create_sample_data() -> Result<RecordBatch> {
     let id_array = Int64Array::from(vec![1, 2, 3]);
 
-    let arrow_schema = ArrowSchema::new(vec![
-        Field::new("id", DataType::Int64, false)
-    ]);
+    let arrow_schema = ArrowSchema::new(vec![Field::new("id", DataType::Int64, false)]);
 
-    let batch = RecordBatch::try_new(
-        Arc::new(arrow_schema),
-        vec![Arc::new(id_array)]
-    )
-    .context("Failed to create record batch")?;
+    let batch = RecordBatch::try_new(Arc::new(arrow_schema), vec![Arc::new(id_array)])
+        .context("Failed to create record batch")?;
 
     Ok(batch)
 }
@@ -98,8 +100,7 @@ use arrow::util::pretty::print_batches;
 
 /// Print Arrow RecordBatch in pretty table format
 fn print_batch(batch: &RecordBatch) -> Result<()> {
-    print_batches(&[batch.clone()])
-        .context("Failed to print batch")?;
+    print_batches(&[batch.clone()]).context("Failed to print batch")?;
     Ok(())
 }
 
@@ -154,11 +155,8 @@ async fn main() -> Result<()> {
     // Set up location and file name generators
     let location_generator = DefaultLocationGenerator::new(table.metadata().clone())
         .context("Failed to create location generator")?;
-    let file_name_generator = DefaultFileNameGenerator::new(
-        "data".to_string(),
-        None,
-        DataFileFormat::Parquet,
-    );
+    let file_name_generator =
+        DefaultFileNameGenerator::new("data".to_string(), None, DataFileFormat::Parquet);
 
     // Create Parquet writer builder
     let parquet_writer_builder = ParquetWriterBuilder::new(
@@ -172,18 +170,28 @@ async fn main() -> Result<()> {
 
     // Create data file writer
     let data_file_writer_builder = DataFileWriterBuilder::new(parquet_writer_builder, None, 0);
-    let mut data_file_writer = data_file_writer_builder.build().await
+    let mut data_file_writer = data_file_writer_builder
+        .build()
+        .await
         .context("Failed to create data file writer")?;
 
     // Write data
-    data_file_writer.write(batch.clone()).await
+    data_file_writer
+        .write(batch.clone())
+        .await
         .context("Failed to write data")?;
 
     // Close writer and retrieve data files
-    let data_files = data_file_writer.close().await
+    let data_files = data_file_writer
+        .close()
+        .await
         .context("Failed to close writer")?;
 
-    println!("✓ Wrote {} rows to {} data files", batch.num_rows(), data_files.len());
+    println!(
+        "✓ Wrote {} rows to {} data files",
+        batch.num_rows(),
+        data_files.len()
+    );
 
     let scan = table
         .scan()

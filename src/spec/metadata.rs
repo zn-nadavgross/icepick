@@ -91,6 +91,28 @@ impl TableMetadata {
     pub fn properties(&self) -> &HashMap<String, String> {
         &self.properties
     }
+
+    /// Create a new TableMetadata with an added snapshot
+    pub fn add_snapshot(&self, snapshot: Snapshot) -> Self {
+        let mut snapshots = self.snapshots.clone();
+        snapshots.push(snapshot.clone());
+
+        Self {
+            format_version: self.format_version,
+            table_uuid: self.table_uuid.clone(),
+            location: self.location.clone(),
+            last_updated_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as i64,
+            last_column_id: self.last_column_id,
+            schemas: self.schemas.clone(),
+            current_schema_id: self.current_schema_id,
+            snapshots,
+            current_snapshot_id: Some(snapshot.snapshot_id()),
+            properties: self.properties.clone(),
+        }
+    }
 }
 
 /// Builder for TableMetadata
@@ -213,5 +235,35 @@ mod tests {
             .unwrap();
 
         assert_eq!(metadata.current_snapshot_id(), None);
+    }
+
+    #[test]
+    fn test_add_snapshot_to_metadata() {
+        let schema = Schema::builder()
+            .with_fields(vec![NestedField::required_field(
+                1,
+                "id".to_string(),
+                Type::Primitive(PrimitiveType::Long),
+            )])
+            .build()
+            .unwrap();
+
+        let metadata = TableMetadata::builder()
+            .with_location("s3://test/table")
+            .with_current_schema(schema)
+            .build()
+            .unwrap();
+
+        let snapshot = crate::spec::Snapshot::builder()
+            .with_snapshot_id(1)
+            .with_timestamp_ms(1000)
+            .with_manifest_list("s3://test/metadata/snap-1.avro")
+            .build()
+            .unwrap();
+
+        let updated = metadata.add_snapshot(snapshot);
+
+        assert_eq!(updated.current_snapshot_id(), Some(1));
+        assert_eq!(updated.snapshots().len(), 1);
     }
 }

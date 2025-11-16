@@ -47,6 +47,7 @@
 
 pub mod catalog;
 pub mod error;
+pub mod spec;
 
 // Re-export common types
 pub use error::{Error, Result};

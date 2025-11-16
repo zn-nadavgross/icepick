@@ -3,6 +3,8 @@
 //! Provides a production-ready implementation of the Iceberg catalog trait for AWS S3 Tables.
 //! This catalog uses AWS SigV4 authentication and is only available on non-WASM platforms.
 
+#![cfg(not(target_family = "wasm"))]
+
 use crate::catalog::rest::IcebergRestCatalog;
 use crate::catalog::Catalog;
 use crate::error::{Error, Result};
@@ -106,6 +108,7 @@ impl S3TablesCatalog {
 }
 
 // Implement Catalog trait by delegating to inner IcebergRestCatalog
+#[cfg(not(target_family = "wasm"))]
 #[async_trait]
 impl Catalog for S3TablesCatalog {
     async fn create_namespace(

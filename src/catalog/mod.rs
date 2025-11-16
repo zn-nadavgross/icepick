@@ -41,6 +41,7 @@ pub(crate) enum CatalogError {
     #[error("HTTP error: {0}")]
     HttpError(String),
 
+    #[cfg(not(target_family = "wasm"))]
     #[error("Invalid ARN: {0}")]
     InvalidArn(String),
 

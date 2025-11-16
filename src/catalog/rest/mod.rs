@@ -1,3 +1,4 @@
+#[cfg(not(target_family = "wasm"))]
 mod arn;
 mod catalog_impl;
 mod client;

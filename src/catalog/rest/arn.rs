@@ -1,3 +1,7 @@
+//! S3 Tables ARN parsing utilities (native platforms only)
+
+#![cfg(not(target_family = "wasm"))]
+
 use crate::catalog::{CatalogError, Result};
 use percent_encoding::{AsciiSet, CONTROLS};
 

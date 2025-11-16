@@ -1,17 +1,21 @@
 //! Client constructor methods for IcebergRestCatalog
 
-use super::arn::{parse_s3tables_arn, ARN_ENCODE_SET};
 use super::commit_types::{CommitTableRequest, CommitTableResponse};
 use super::types;
 use super::IcebergRestCatalog;
 use crate::catalog::{AuthProvider, CatalogError, R2Config, Result};
 use crate::io::FileIO;
 use crate::spec::TableIdent;
-use percent_encoding::utf8_percent_encode;
 use reqwest::Client;
 
 #[cfg(not(target_family = "wasm"))]
+use super::arn::{parse_s3tables_arn, ARN_ENCODE_SET};
+
+#[cfg(not(target_family = "wasm"))]
 use aws_credential_types::provider::ProvideCredentials;
+
+#[cfg(not(target_family = "wasm"))]
+use percent_encoding::utf8_percent_encode;
 
 impl IcebergRestCatalog {
     /// Create catalog for Cloudflare R2 Data Catalog (shortcut)

@@ -9,7 +9,8 @@ use crate::spec::{NamespaceIdent, TableCreation, TableIdent};
 use crate::table::Table;
 
 /// Core catalog operations for Iceberg tables
-#[async_trait]
+#[cfg_attr(not(target_family = "wasm"), async_trait)]
+#[cfg_attr(target_family = "wasm", async_trait(?Send))]
 pub trait Catalog: Send + Sync {
     /// Create a namespace (idempotent - returns Ok if already exists)
     async fn create_namespace(

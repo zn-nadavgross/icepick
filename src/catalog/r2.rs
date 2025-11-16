@@ -104,6 +104,7 @@ impl R2Catalog {
         let inner = IcebergRestCatalog::from_r2(name, account_id, bucket_name, api_token)
             .await
             .map_err(|e| match e {
+                #[cfg(not(target_family = "wasm"))]
                 crate::catalog::CatalogError::InvalidArn(msg) => Error::invalid_arn(msg),
                 crate::catalog::CatalogError::AuthError(msg) => Error::unauthorized(msg),
                 crate::catalog::CatalogError::HttpError(msg) => Error::unexpected(msg),
@@ -117,8 +118,61 @@ impl R2Catalog {
     }
 }
 
-// Implement Catalog trait by delegating to inner IcebergRestCatalog
+// Implement Catalog trait by delegating to inner IcebergRestCatalog (native platforms)
+#[cfg(not(target_family = "wasm"))]
 #[async_trait]
+impl Catalog for R2Catalog {
+    async fn create_namespace(
+        &self,
+        namespace: &NamespaceIdent,
+        properties: HashMap<String, String>,
+    ) -> Result<()> {
+        self.inner.create_namespace(namespace, properties).await
+    }
+
+    async fn namespace_exists(&self, namespace: &NamespaceIdent) -> Result<bool> {
+        self.inner.namespace_exists(namespace).await
+    }
+
+    async fn list_tables(&self, namespace: &NamespaceIdent) -> Result<Vec<TableIdent>> {
+        self.inner.list_tables(namespace).await
+    }
+
+    async fn table_exists(&self, identifier: &TableIdent) -> Result<bool> {
+        self.inner.table_exists(identifier).await
+    }
+
+    async fn create_table(
+        &self,
+        namespace: &NamespaceIdent,
+        creation: TableCreation,
+    ) -> Result<Table> {
+        self.inner.create_table(namespace, creation).await
+    }
+
+    async fn load_table(&self, identifier: &TableIdent) -> Result<Table> {
+        self.inner.load_table(identifier).await
+    }
+
+    async fn drop_table(&self, identifier: &TableIdent) -> Result<()> {
+        self.inner.drop_table(identifier).await
+    }
+
+    async fn update_table_metadata(
+        &self,
+        identifier: &TableIdent,
+        old_metadata_location: &str,
+        new_metadata_location: &str,
+    ) -> Result<()> {
+        self.inner
+            .update_table_metadata(identifier, old_metadata_location, new_metadata_location)
+            .await
+    }
+}
+
+// Implement Catalog trait by delegating to inner IcebergRestCatalog (WASM platforms)
+#[cfg(target_family = "wasm")]
+#[async_trait(?Send)]
 impl Catalog for R2Catalog {
     async fn create_namespace(
         &self,

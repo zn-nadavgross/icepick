@@ -37,7 +37,8 @@ pub enum Error {
         source: reqwest::Error,
     },
 
-    /// Invalid ARN format
+    /// Invalid ARN format (native platforms only)
+    #[cfg(not(target_family = "wasm"))]
     #[error("Invalid ARN: {arn}")]
     InvalidArn { arn: String },
 
@@ -113,7 +114,8 @@ impl Error {
         }
     }
 
-    /// Create an InvalidArn error
+    /// Create an InvalidArn error (native platforms only)
+    #[cfg(not(target_family = "wasm"))]
     pub fn invalid_arn(arn: impl Into<String>) -> Self {
         Self::InvalidArn { arn: arn.into() }
     }
@@ -166,8 +168,11 @@ mod tests {
         let err = Error::forbidden("namespace1");
         assert!(matches!(err, Error::Forbidden { .. }));
 
-        let err = Error::invalid_arn("bad-arn");
-        assert!(matches!(err, Error::InvalidArn { .. }));
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let err = Error::invalid_arn("bad-arn");
+            assert!(matches!(err, Error::InvalidArn { .. }));
+        }
     }
 
     #[test]

@@ -46,7 +46,7 @@
 //! ```
 
 pub mod catalog;
-mod commit;
+pub mod commit;
 pub mod error;
 pub mod io;
 pub mod manifest;

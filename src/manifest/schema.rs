@@ -198,6 +198,133 @@ pub fn manifest_entry_schema_v2() -> Result<Schema, apache_avro::Error> {
 }
 
 /// Returns the Avro schema for manifest lists in Iceberg v2 format
+///
+/// # Example
+/// ```
+/// use icepick::manifest::schema::manifest_list_schema_v2;
+/// let schema = manifest_list_schema_v2();
+/// assert!(schema.is_ok());
+/// ```
 pub fn manifest_list_schema_v2() -> Result<Schema, apache_avro::Error> {
-    todo!("Implement manifest list schema")
+    let schema_json = r#"{
+  "type": "record",
+  "name": "manifest_file",
+  "fields": [
+    {
+      "name": "manifest_path",
+      "type": "string",
+      "field-id": 500
+    },
+    {
+      "name": "manifest_length",
+      "type": "long",
+      "field-id": 501
+    },
+    {
+      "name": "partition_spec_id",
+      "type": "int",
+      "field-id": 502
+    },
+    {
+      "name": "content",
+      "type": "int",
+      "field-id": 517,
+      "doc": "0=DATA, 1=DELETES"
+    },
+    {
+      "name": "sequence_number",
+      "type": "long",
+      "field-id": 515
+    },
+    {
+      "name": "min_sequence_number",
+      "type": "long",
+      "field-id": 516
+    },
+    {
+      "name": "added_snapshot_id",
+      "type": "long",
+      "field-id": 503
+    },
+    {
+      "name": "added_files_count",
+      "type": "int",
+      "field-id": 504
+    },
+    {
+      "name": "existing_files_count",
+      "type": "int",
+      "field-id": 505
+    },
+    {
+      "name": "deleted_files_count",
+      "type": "int",
+      "field-id": 506
+    },
+    {
+      "name": "added_rows_count",
+      "type": "long",
+      "field-id": 512
+    },
+    {
+      "name": "existing_rows_count",
+      "type": "long",
+      "field-id": 513
+    },
+    {
+      "name": "deleted_rows_count",
+      "type": "long",
+      "field-id": 514
+    },
+    {
+      "name": "partitions",
+      "type": [
+        "null",
+        {
+          "type": "array",
+          "items": {
+            "type": "record",
+            "name": "field_summary",
+            "fields": [
+              {
+                "name": "contains_null",
+                "type": "boolean",
+                "field-id": 509
+              },
+              {
+                "name": "contains_nan",
+                "type": ["null", "boolean"],
+                "default": null,
+                "field-id": 518
+              },
+              {
+                "name": "lower_bound",
+                "type": ["null", "bytes"],
+                "default": null,
+                "field-id": 510
+              },
+              {
+                "name": "upper_bound",
+                "type": ["null", "bytes"],
+                "default": null,
+                "field-id": 511
+              }
+            ]
+          },
+          "element-id": 508
+        }
+      ],
+      "default": null,
+      "field-id": 507
+    },
+    {
+      "name": "key_metadata",
+      "type": ["null", "bytes"],
+      "default": null,
+      "field-id": 519
+    }
+  ]
+}"#;
+
+    Schema::parse_str(schema_json)
 }

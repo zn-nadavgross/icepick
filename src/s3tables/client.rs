@@ -4,6 +4,8 @@ use reqsign_aws_v4::{Credential, DefaultCredentialProvider, RequestSigner};
 use reqsign_file_read_tokio::TokioFileRead;
 use reqsign_http_send_reqwest::ReqwestHttpSend;
 use reqwest::{Client, Response};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Parse S3 Tables ARN and extract region and bucket name
 /// ARN format: arn:aws:s3tables:region:account:bucket/name
@@ -37,6 +39,18 @@ fn parse_s3tables_arn(arn: &str) -> Result<(String, String)> {
         .to_string();
 
     Ok((region, bucket_name))
+}
+
+#[derive(Serialize)]
+struct CreateNamespaceRequest {
+    namespace: Vec<String>,
+    properties: HashMap<String, String>,
+}
+
+#[derive(Deserialize)]
+struct CreateNamespaceResponse {
+    namespace: Vec<String>,
+    properties: HashMap<String, String>,
 }
 
 pub struct S3TablesClient {
@@ -76,6 +90,32 @@ impl S3TablesClient {
             http_client,
             signer,
         })
+    }
+
+    pub async fn create_namespace(
+        &self,
+        namespace: &str,
+        properties: HashMap<String, String>,
+    ) -> Result<()> {
+        let url = format!("{}/v1/namespaces", self.endpoint);
+
+        let body = CreateNamespaceRequest {
+            namespace: vec![namespace.to_string()],
+            properties,
+        };
+
+        let req = self.http_client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .build()
+            .map_err(|e| S3TablesError::HttpError(format!("Failed to build request: {}", e)))?;
+
+        let response = self.send_signed_request(req).await?;
+        let _json_value = self.handle_response(response).await?;
+
+        // Namespace created successfully
+        Ok(())
     }
 
     async fn send_signed_request(&self, req: reqwest::Request) -> Result<Response> {

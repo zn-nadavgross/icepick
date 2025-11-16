@@ -1,6 +1,6 @@
 //! Transaction commit orchestration
 
-mod orchestrator;
+pub mod orchestrator;
 pub mod paths;
 
 #[allow(unused_imports)]

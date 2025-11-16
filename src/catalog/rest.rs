@@ -305,3 +305,95 @@ impl IcebergRestCatalog {
         }
     }
 }
+
+fn to_iceberg_error(e: CatalogError) -> IcebergError {
+    match e {
+        CatalogError::NotFound(msg) => IcebergError::new(ErrorKind::DataInvalid, msg),
+        CatalogError::Conflict(msg) => IcebergError::new(ErrorKind::DataInvalid, msg),
+        CatalogError::InvalidRequest(msg) => IcebergError::new(ErrorKind::DataInvalid, msg),
+        CatalogError::AuthError(msg) => IcebergError::new(ErrorKind::Unexpected, msg),
+        CatalogError::HttpError(msg) => IcebergError::new(ErrorKind::Unexpected, msg),
+        CatalogError::InvalidArn(msg) => IcebergError::new(ErrorKind::DataInvalid, msg),
+        CatalogError::InvalidConfig(msg) => IcebergError::new(ErrorKind::DataInvalid, msg),
+        CatalogError::Unexpected(msg) => IcebergError::new(ErrorKind::Unexpected, msg),
+    }
+}
+
+#[async_trait]
+impl Catalog for IcebergRestCatalog {
+    async fn list_namespaces(
+        &self,
+        _parent: Option<&NamespaceIdent>,
+    ) -> IcebergResult<Vec<NamespaceIdent>> {
+        Err(IcebergError::new(
+            ErrorKind::FeatureUnsupported,
+            "Listing namespaces is not supported",
+        ))
+    }
+
+    async fn create_namespace(
+        &self,
+        namespace: &NamespaceIdent,
+        properties: HashMap<String, String>,
+    ) -> IcebergResult<Namespace> {
+        let namespace_name = namespace.to_string();
+        let url = format!("{}/{}/namespaces", self.endpoint, self.prefix);
+
+        let body = CreateNamespaceRequest {
+            namespace: vec![namespace_name],
+            properties: properties.clone(),
+        };
+
+        let req = self
+            .http_client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .build()
+            .map_err(|e| IcebergError::new(ErrorKind::Unexpected, format!("Failed to build request: {}", e)))?;
+
+        let response = self.send_request(req).await.map_err(to_iceberg_error)?;
+        let _json_value = self.handle_response(response).await.map_err(to_iceberg_error)?;
+
+        Ok(Namespace::with_properties(namespace.clone(), properties))
+    }
+
+    async fn get_namespace(&self, _namespace: &NamespaceIdent) -> IcebergResult<Namespace> {
+        Err(IcebergError::new(
+            ErrorKind::FeatureUnsupported,
+            "Getting namespace properties is not supported",
+        ))
+    }
+
+    async fn namespace_exists(&self, _namespace: &NamespaceIdent) -> IcebergResult<bool> {
+        Err(IcebergError::new(
+            ErrorKind::FeatureUnsupported,
+            "Checking namespace existence is not supported",
+        ))
+    }
+
+    async fn update_namespace(
+        &self,
+        _namespace: &NamespaceIdent,
+        _properties: HashMap<String, String>,
+    ) -> IcebergResult<()> {
+        Err(IcebergError::new(
+            ErrorKind::FeatureUnsupported,
+            "Updating namespaces is not supported",
+        ))
+    }
+
+    async fn drop_namespace(&self, _namespace: &NamespaceIdent) -> IcebergResult<()> {
+        Err(IcebergError::new(
+            ErrorKind::FeatureUnsupported,
+            "Dropping namespaces is not supported",
+        ))
+    }
+
+    async fn list_tables(&self, _namespace: &NamespaceIdent) -> IcebergResult<Vec<TableIdent>> {
+        Err(IcebergError::new(
+            ErrorKind::FeatureUnsupported,
+            "Listing tables is not supported",
+        ))
+    }
+}

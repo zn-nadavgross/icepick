@@ -99,3 +99,119 @@ impl AuthProvider for SigV4AuthProvider {
         Ok(signed_req)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_credentials() -> aws_credential_types::Credentials {
+        aws_credential_types::Credentials::new(
+            "AKIAIOSFODNN7EXAMPLE",
+            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            None,
+            None,
+            "test",
+        )
+    }
+
+    #[tokio::test]
+    async fn test_sigv4_adds_authorization_header() {
+        let provider = SigV4AuthProvider::new(
+            "us-west-2".to_string(),
+            "s3tables".to_string(),
+            create_test_credentials(),
+        );
+
+        let req = reqwest::Client::new()
+            .get("https://s3tables.us-west-2.amazonaws.com/iceberg")
+            .build()
+            .unwrap();
+
+        let signed_req = provider.sign_request(req).await.unwrap();
+
+        // Verify Authorization header is present
+        let auth_header = signed_req
+            .headers()
+            .get(reqwest::header::AUTHORIZATION)
+            .expect("Authorization header should be present");
+
+        let auth_str = auth_header.to_str().unwrap();
+        assert!(auth_str.starts_with("AWS4-HMAC-SHA256"));
+        assert!(auth_str.contains("Credential="));
+        assert!(auth_str.contains("SignedHeaders="));
+        assert!(auth_str.contains("Signature="));
+    }
+
+    #[tokio::test]
+    async fn test_sigv4_adds_aws_headers() {
+        let provider = SigV4AuthProvider::new(
+            "us-east-1".to_string(),
+            "s3tables".to_string(),
+            create_test_credentials(),
+        );
+
+        let req = reqwest::Client::new()
+            .post("https://s3tables.us-east-1.amazonaws.com/iceberg")
+            .body("test body")
+            .build()
+            .unwrap();
+
+        let signed_req = provider.sign_request(req).await.unwrap();
+
+        // Verify AWS-specific headers
+        assert!(signed_req.headers().contains_key("x-amz-date"));
+        assert!(signed_req
+            .headers()
+            .contains_key(reqwest::header::AUTHORIZATION));
+
+        // Verify the signed request maintains the original body
+        let body = signed_req.body().unwrap().as_bytes().unwrap();
+        assert_eq!(body, b"test body");
+    }
+
+    #[tokio::test]
+    async fn test_sigv4_preserves_original_headers() {
+        let provider = SigV4AuthProvider::new(
+            "us-west-2".to_string(),
+            "s3tables".to_string(),
+            create_test_credentials(),
+        );
+
+        let req = reqwest::Client::new()
+            .get("https://s3tables.us-west-2.amazonaws.com/iceberg")
+            .header("Content-Type", "application/json")
+            .header("X-Custom-Header", "custom-value")
+            .build()
+            .unwrap();
+
+        let signed_req = provider.sign_request(req).await.unwrap();
+
+        // Original headers should be preserved
+        assert_eq!(
+            signed_req.headers().get("Content-Type").unwrap(),
+            "application/json"
+        );
+        assert_eq!(
+            signed_req.headers().get("X-Custom-Header").unwrap(),
+            "custom-value"
+        );
+
+        // AWS headers should be added
+        assert!(signed_req.headers().contains_key("x-amz-date"));
+        assert!(signed_req
+            .headers()
+            .contains_key(reqwest::header::AUTHORIZATION));
+    }
+
+    #[test]
+    fn test_sigv4_provider_debug() {
+        let provider = SigV4AuthProvider::new(
+            "us-west-2".to_string(),
+            "s3tables".to_string(),
+            create_test_credentials(),
+        );
+
+        let debug_str = format!("{:?}", provider);
+        assert!(debug_str.contains("SigV4AuthProvider"));
+    }
+}

@@ -11,7 +11,6 @@ pub fn to_iceberg_error(e: CatalogError) -> IcebergError {
         CatalogError::AuthError(msg) => IcebergError::new(ErrorKind::Unexpected, msg),
         CatalogError::HttpError(msg) => IcebergError::new(ErrorKind::Unexpected, msg),
         CatalogError::InvalidArn(msg) => IcebergError::new(ErrorKind::DataInvalid, msg),
-        CatalogError::InvalidConfig(msg) => IcebergError::new(ErrorKind::DataInvalid, msg),
         CatalogError::Unexpected(msg) => IcebergError::new(ErrorKind::Unexpected, msg),
     }
 }

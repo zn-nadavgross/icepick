@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use futures::stream::StreamExt;
-use hello_world_iceberg::catalog::IcebergRestCatalog;
 use iceberg::spec::{DataFileFormat, NestedField, PrimitiveType, Schema, Type};
 use iceberg::transaction::{ApplyTransactionAction, Transaction};
 use iceberg::writer::base_writer::data_file_writer::DataFileWriterBuilder;
@@ -11,28 +10,24 @@ use iceberg::writer::file_writer::ParquetWriterBuilder;
 use iceberg::writer::{IcebergWriter, IcebergWriterBuilder};
 use iceberg::NamespaceIdent;
 use iceberg::{Catalog, TableCreation};
+use icepick::R2Catalog;
 use parquet::file::properties::WriterProperties;
 
 /// Create R2 Data Catalog with Bearer token authentication from .env
-async fn create_r2_catalog_from_env() -> Result<IcebergRestCatalog> {
+async fn create_r2_catalog_from_env() -> Result<R2Catalog> {
     // Load .env file
     dotenvy::dotenv().ok();
 
-    let catalog_uri = std::env::var("CLOUDFLARE_CATALOG_URI")
-        .context("CLOUDFLARE_CATALOG_URI not found in environment")?;
-    let warehouse_name = std::env::var("CLOUDFLARE_WAREHOUSE_NAME")
-        .context("CLOUDFLARE_WAREHOUSE_NAME not found in environment")?;
+    let account_id = std::env::var("CLOUDFLARE_ACCOUNT_ID")
+        .context("CLOUDFLARE_ACCOUNT_ID not found in environment")?;
+    let bucket_name = std::env::var("CLOUDFLARE_BUCKET_NAME")
+        .context("CLOUDFLARE_BUCKET_NAME not found in environment")?;
     let api_token = std::env::var("CLOUDFLARE_API_TOKEN")
         .context("CLOUDFLARE_API_TOKEN not found in environment")?;
 
-    let catalog = IcebergRestCatalog::from_catalog_uri(
-        "r2".to_string(),
-        catalog_uri,
-        warehouse_name,
-        api_token,
-    )
-    .await
-    .map_err(|e| anyhow::anyhow!("Failed to create R2 catalog: {}", e))?;
+    let catalog = R2Catalog::new("r2", account_id, bucket_name, api_token)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to create R2 catalog: {}", e))?;
 
     Ok(catalog)
 }

@@ -8,10 +8,6 @@ use crate::catalog::{AuthProvider, CatalogError, Result};
 use iceberg::io::FileIO;
 use reqwest::{Client, Response};
 
-pub use arn::parse_s3tables_arn;
-pub use helpers::to_iceberg_error;
-pub use types::*;
-
 /// Shared Iceberg REST catalog implementation
 pub struct IcebergRestCatalog {
     endpoint: String,

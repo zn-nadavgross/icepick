@@ -82,6 +82,33 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_s3tables_arn_different_regions() {
+        let test_cases = vec![
+            (
+                "arn:aws:s3tables:us-east-1:123456789012:bucket/test",
+                "us-east-1",
+                "test",
+            ),
+            (
+                "arn:aws:s3tables:eu-west-1:999999999999:bucket/prod-bucket",
+                "eu-west-1",
+                "prod-bucket",
+            ),
+            (
+                "arn:aws:s3tables:ap-southeast-2:111111111111:bucket/my-data",
+                "ap-southeast-2",
+                "my-data",
+            ),
+        ];
+
+        for (arn, expected_region, expected_bucket) in test_cases {
+            let result = parse_s3tables_arn(arn).expect("ARN should be valid");
+            assert_eq!(result.0, expected_region);
+            assert_eq!(result.1, expected_bucket);
+        }
+    }
+
+    #[test]
     fn test_parse_s3tables_arn_invalid_format() {
         let arn = "invalid-arn";
         let result = parse_s3tables_arn(arn);
@@ -94,6 +121,9 @@ mod tests {
         let arn = "arn:aws:s3:us-west-2:123456789012:bucket/my-bucket";
         let result = parse_s3tables_arn(arn);
         assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, CatalogError::InvalidArn(_)));
+        assert!(err.to_string().contains("s3"));
     }
 
     #[test]
@@ -101,5 +131,37 @@ mod tests {
         let arn = "arn:aws:s3tables:us-west-2:123456789012:my-bucket";
         let result = parse_s3tables_arn(arn);
         assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, CatalogError::InvalidArn(_)));
+        assert!(err.to_string().contains("bucket/"));
+    }
+
+    #[test]
+    fn test_parse_s3tables_arn_too_few_parts() {
+        let arn = "arn:aws:s3tables:us-west-2";
+        let result = parse_s3tables_arn(arn);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, CatalogError::InvalidArn(_)));
+        assert!(err.to_string().contains("6 parts"));
+    }
+
+    #[test]
+    fn test_parse_s3tables_arn_not_starting_with_arn() {
+        let arn = "aws:aws:s3tables:us-west-2:123456789012:bucket/my-bucket";
+        let result = parse_s3tables_arn(arn);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, CatalogError::InvalidArn(_)));
+        assert!(err.to_string().contains("arn"));
+    }
+
+    #[test]
+    fn test_parse_s3tables_arn_bucket_name_with_hyphens() {
+        let arn = "arn:aws:s3tables:us-west-2:123456789012:bucket/my-test-bucket-123";
+        let result = parse_s3tables_arn(arn);
+        assert!(result.is_ok());
+        let (_, bucket) = result.unwrap();
+        assert_eq!(bucket, "my-test-bucket-123");
     }
 }

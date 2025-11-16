@@ -1,6 +1,5 @@
 use anyhow::{ensure, Context, Result};
 use futures::stream::StreamExt;
-use hello_world_iceberg::catalog::IcebergRestCatalog;
 use iceberg::spec::{DataFileFormat, NestedField, PrimitiveType, Schema, Type};
 use iceberg::transaction::{ApplyTransactionAction, Transaction};
 use iceberg::writer::base_writer::data_file_writer::DataFileWriterBuilder;
@@ -11,11 +10,12 @@ use iceberg::writer::file_writer::ParquetWriterBuilder;
 use iceberg::writer::{IcebergWriter, IcebergWriterBuilder};
 use iceberg::NamespaceIdent;
 use iceberg::{Catalog, TableCreation};
+use icepick::S3TablesCatalog;
 use parquet::file::properties::WriterProperties;
 
 /// Create S3 Tables catalog with SigV4 authentication
-async fn create_s3_tables_catalog(arn: &str) -> Result<IcebergRestCatalog> {
-    let catalog = IcebergRestCatalog::from_s3_tables_arn("s3tables".to_string(), arn)
+async fn create_s3_tables_catalog(arn: &str) -> Result<S3TablesCatalog> {
+    let catalog = S3TablesCatalog::from_arn("s3tables", arn)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to create S3 Tables catalog: {}", e))?;
 

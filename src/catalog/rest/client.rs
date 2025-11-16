@@ -32,7 +32,7 @@ impl IcebergRestCatalog {
     pub async fn from_r2_config(name: String, config: R2Config) -> Result<Self> {
         let endpoint = config.endpoint_override.unwrap_or_else(|| {
             format!(
-                "https://api.cloudflare.com/client/v4/accounts/{}/r2/buckets/{}/data-catalog",
+                "https://catalog.cloudflarestorage.com/{}/{}",
                 config.account_id, config.bucket_name
             )
         });
@@ -42,38 +42,8 @@ impl IcebergRestCatalog {
         ));
         let http_client = Client::new();
 
-        // Create FileIO for S3 access
-        let file_io = FileIO::from_path("s3://")
-            .map_err(|e| CatalogError::Unexpected(format!("Failed to create FileIO: {}", e)))?
-            .build()
-            .map_err(|e| CatalogError::Unexpected(format!("Failed to build FileIO: {}", e)))?;
-
-        Ok(Self {
-            endpoint,
-            prefix: "v1".to_string(),
-            http_client,
-            auth_provider: auth,
-            file_io,
-            name,
-        })
-    }
-
-    /// Create catalog with direct catalog URI and warehouse name
-    /// This is useful for Cloudflare R2 when you have the full catalog URI.
-    /// Follows PyIceberg pattern: calls /v1/config first to get server configuration.
-    pub async fn from_catalog_uri(
-        name: String,
-        catalog_uri: impl Into<String>,
-        warehouse_name: impl Into<String>,
-        api_token: impl Into<String>,
-    ) -> Result<Self> {
-        let endpoint = catalog_uri.into();
-        let warehouse = warehouse_name.into();
-
-        let auth = Box::new(crate::catalog::BearerTokenAuthProvider::new(
-            api_token.into(),
-        ));
-        let http_client = Client::new();
+        // Construct warehouse name from account_id and bucket_name
+        let warehouse = format!("{}_{}", config.account_id, config.bucket_name);
 
         // Call /v1/config to get server configuration (per Iceberg REST spec)
         let config_url = format!("{}/v1/config?warehouse={}", endpoint, warehouse);
@@ -110,32 +80,27 @@ impl IcebergRestCatalog {
             )));
         }
 
-        let config: types::ConfigResponse = serde_json::from_str(&body_text).map_err(|e| {
-            CatalogError::HttpError(format!("Failed to parse config response: {}", e))
-        })?;
+        let config_response: types::ConfigResponse =
+            serde_json::from_str(&body_text).map_err(|e| {
+                CatalogError::HttpError(format!("Failed to parse config response: {}", e))
+            })?;
 
         // Merge configuration: defaults < client properties < overrides
-        let mut properties = config.defaults;
+        let mut properties = config_response.defaults;
         properties.insert("warehouse".to_string(), warehouse.clone());
-        properties.extend(config.overrides);
+        properties.extend(config_response.overrides);
 
         // Extract prefix from server configuration (defaults to empty string)
         let prefix = properties.get("prefix").cloned().unwrap_or_default();
         eprintln!("DEBUG: Using prefix from server: '{}'", prefix);
         eprintln!("DEBUG: Config properties: {:?}", properties);
 
-        // Extract account ID from endpoint for R2 S3 endpoint
-        // endpoint format: https://catalog.cloudflarestorage.com/{account_id}/{bucket}
-        let account_id = endpoint.split('/').nth(3).ok_or_else(|| {
-            CatalogError::InvalidConfig("Cannot extract account ID from catalog URI".to_string())
-        })?;
-
         // Configure FileIO for R2 S3-compatible storage
         let mut file_io_builder = FileIO::from_path("s3://")
             .map_err(|e| CatalogError::Unexpected(format!("Failed to create FileIO: {}", e)))?;
 
         // Set R2's S3-compatible endpoint
-        let r2_endpoint = format!("https://{}.r2.cloudflarestorage.com", account_id);
+        let r2_endpoint = format!("https://{}.r2.cloudflarestorage.com", config.account_id);
         eprintln!("DEBUG: Setting S3 endpoint to: {}", r2_endpoint);
         file_io_builder = file_io_builder.with_prop("s3.endpoint", &r2_endpoint);
 

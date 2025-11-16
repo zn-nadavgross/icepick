@@ -140,7 +140,7 @@ async fn test_end_to_end_commit_with_stats() {
         .await
         .unwrap()
         .into_iter()
-        .any(|entry| entry.path().contains("snap-1-1-"));
+        .any(|entry| entry.path().contains("snap-") && entry.path().contains("-1-"));
     assert!(manifest_list_exists, "Manifest list should exist");
 
     let metadata_exists = op
@@ -156,10 +156,15 @@ async fn test_end_to_end_commit_with_stats() {
         .unwrap();
     let new_metadata: TableMetadata = serde_json::from_slice(&metadata_bytes.to_vec()).unwrap();
 
-    assert_eq!(new_metadata.current_snapshot_id(), Some(1));
+    // Verify snapshot exists and is a positive ID (UUID-based)
+    let snapshot_id = new_metadata
+        .current_snapshot_id()
+        .expect("Should have current snapshot");
+    assert!(snapshot_id > 0, "Snapshot ID should be positive");
     assert_eq!(new_metadata.snapshots().len(), 1);
 
     let snapshot = new_metadata.current_snapshot().unwrap();
+    assert_eq!(snapshot.snapshot_id(), snapshot_id);
     assert_eq!(
         snapshot.summary().get("operation"),
         Some(&"append".to_string())
@@ -261,6 +266,21 @@ async fn test_multiple_sequential_commits() {
     let final_metadata: TableMetadata =
         serde_json::from_slice(&final_metadata_bytes.to_vec()).unwrap();
 
-    assert_eq!(final_metadata.current_snapshot_id(), Some(2));
+    // Verify we have 2 snapshots with valid IDs
     assert_eq!(final_metadata.snapshots().len(), 2);
+    let current_snapshot_id = final_metadata
+        .current_snapshot_id()
+        .expect("Should have current snapshot");
+    assert!(
+        current_snapshot_id > 0,
+        "Current snapshot ID should be positive"
+    );
+
+    // Verify the current snapshot is the second one (most recent)
+    let snapshots = final_metadata.snapshots();
+    assert_eq!(snapshots[1].snapshot_id(), current_snapshot_id);
+
+    // Verify the second snapshot has the first as its parent
+    let first_snapshot_id = snapshots[0].snapshot_id();
+    assert_eq!(snapshots[1].parent_snapshot_id(), Some(first_snapshot_id));
 }

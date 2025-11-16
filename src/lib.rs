@@ -49,9 +49,16 @@ pub mod catalog;
 pub mod error;
 pub mod io;
 pub mod spec;
+mod table;
 
 // Re-export common types
 pub use error::{Error, Result};
+pub use io::FileIO;
+pub use spec::{
+    NamespaceIdent, NestedField, PrimitiveType, Schema, Snapshot, StructType, Summary, TableIdent,
+    TableMetadata, Type,
+};
+pub use table::Table;
 
 // Re-export catalog types
 pub use catalog::r2::R2Catalog;

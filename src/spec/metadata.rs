@@ -64,11 +64,16 @@ impl TableMetadata {
     }
 
     /// Get current schema
-    pub fn current_schema(&self) -> &Schema {
+    pub fn current_schema(&self) -> Result<&Schema> {
         self.schemas
             .iter()
             .find(|s| s.schema_id() == self.current_schema_id)
-            .expect("Current schema must exist")
+            .ok_or_else(|| {
+                Error::InvalidInput(format!(
+                    "Current schema ID {} not found in metadata",
+                    self.current_schema_id
+                ))
+            })
     }
 
     /// Get all snapshots

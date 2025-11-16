@@ -39,7 +39,7 @@ async fn test_table_accessors() {
 
     assert_eq!(table.identifier().to_string(), "db.table");
     assert_eq!(table.location(), "s3://bucket/warehouse/db/table");
-    assert_eq!(table.schema().schema_id(), 0);
+    assert_eq!(table.schema().unwrap().schema_id(), 0);
     assert_eq!(
         table.metadata_location(),
         "s3://bucket/warehouse/db/table/metadata/v1.json"

@@ -8,6 +8,7 @@ use crate::spec::{Schema, Snapshot, TableIdent, TableMetadata};
 use crate::transaction::Transaction;
 
 /// An Iceberg table with integrated storage
+#[derive(Clone)]
 pub struct Table {
     identifier: TableIdent,
     metadata: TableMetadata,
@@ -43,7 +44,7 @@ impl Table {
     }
 
     /// Get the current schema
-    pub fn schema(&self) -> &Schema {
+    pub fn schema(&self) -> Result<&Schema> {
         self.metadata.current_schema()
     }
 
@@ -68,8 +69,8 @@ impl Table {
     }
 
     /// Start a new transaction for writing data
-    pub fn transaction(&self) -> Transaction<'_> {
-        Transaction::new(self)
+    pub fn transaction(&self) -> Transaction {
+        Transaction::new(self.clone())
     }
 
     /// List all data files in the current snapshot

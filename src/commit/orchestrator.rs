@@ -5,6 +5,7 @@ use crate::error::{Error, Result};
 use crate::manifest::writer::{write_manifest, write_manifest_list};
 use crate::spec::{Snapshot, Summary};
 use crate::transaction::{Transaction, TransactionOperation};
+use tracing::debug;
 use uuid::Uuid;
 
 /// Generate a unique snapshot ID using UUID-based approach (like iceberg-rust)
@@ -37,12 +38,13 @@ fn generate_snapshot_id(table: &crate::table::Table) -> i64 {
 
 /// Try to commit once (no retries)
 pub async fn try_commit(
-    transaction: &Transaction<'_>,
+    transaction: &Transaction,
     catalog: &dyn crate::catalog::Catalog,
 ) -> Result<()> {
     let table = transaction.table();
     let metadata = table.metadata();
     let file_io = table.file_io();
+    let current_schema = metadata.current_schema()?;
 
     // Generate IDs
     let snapshot_id = generate_snapshot_id(table);
@@ -60,8 +62,8 @@ pub async fn try_commit(
             .map(|max| max + 1)
             .unwrap_or(1)
     };
-    eprintln!(
-        "DEBUG: Generated snapshot_id: {}, sequence_number: {}",
+    debug!(
+        "Generated snapshot_id: {}, sequence_number: {}",
         snapshot_id, sequence_number
     );
     let commit_uuid = Uuid::new_v4().to_string().replace('-', "");
@@ -116,24 +118,19 @@ pub async fn try_commit(
 
     // Handle parent snapshot ID: -1 means no parent (first snapshot)
     let current_snap_id = metadata.current_snapshot_id();
-    eprintln!(
-        "DEBUG: Current snapshot ID from metadata: {:?}",
-        current_snap_id
-    );
-    eprintln!(
-        "DEBUG: Building snapshot with schema_id: {}",
-        metadata.current_schema().schema_id()
-    );
+    debug!("Current snapshot ID from metadata: {:?}", current_snap_id);
+    let schema_id = current_schema.schema_id();
+    debug!("Building snapshot with schema_id: {}", schema_id);
 
     let mut snapshot_builder = Snapshot::builder().with_snapshot_id(snapshot_id);
 
     // Only set parent if there is a valid parent (not -1)
     if let Some(parent_id) = current_snap_id {
         if parent_id != -1 {
-            eprintln!("DEBUG: Setting parent_snapshot_id: {}", parent_id);
+            debug!("Setting parent_snapshot_id: {}", parent_id);
             snapshot_builder = snapshot_builder.with_parent_snapshot_id(parent_id);
         } else {
-            eprintln!("DEBUG: No parent snapshot (current_snapshot_id = -1)");
+            debug!("No parent snapshot (current_snapshot_id = -1)");
         }
     }
 
@@ -147,11 +144,11 @@ pub async fn try_commit(
         )
         .with_manifest_list(&manifest_list_file_path)
         .with_summary(summary)
-        .with_schema_id(metadata.current_schema().schema_id())
+        .with_schema_id(schema_id)
         .build()?;
 
-    eprintln!(
-        "DEBUG: Built snapshot - parent: {:?}, schema: {:?}",
+    debug!(
+        "Built snapshot - parent: {:?}, schema: {:?}",
         snapshot.parent_snapshot_id(),
         snapshot.schema_id()
     );
@@ -161,8 +158,8 @@ pub async fn try_commit(
 
     // Debug: Check the snapshot in new_metadata before serialization
     if let Some(last_snapshot) = new_metadata.snapshots().last() {
-        eprintln!(
-            "DEBUG: Snapshot in new_metadata before serialization - parent: {:?}, schema: {:?}",
+        debug!(
+            "Snapshot in new_metadata before serialization - parent: {:?}, schema: {:?}",
             last_snapshot.parent_snapshot_id(),
             last_snapshot.schema_id()
         );
@@ -178,15 +175,15 @@ pub async fn try_commit(
         if let Some(snapshot_section) = json_str.rfind("\"snapshot-id\"") {
             let snippet = &json_str[snapshot_section.saturating_sub(200)
                 ..std::cmp::min(snapshot_section + 500, json_str.len())];
-            eprintln!("DEBUG: Serialized snapshot snippet:\n{}", snippet);
+            debug!("Serialized snapshot snippet:\n{}", snippet);
         }
     }
 
     // Write metadata file
-    eprintln!("DEBUG: Writing metadata to: {}", new_metadata_path);
+    debug!("Writing metadata to: {}", new_metadata_path);
     // Note: This will fail with 412 if file exists, which is fine for testing
     // In production, we should handle the exists check properly
-    file_io.write(&new_metadata_path, metadata_json).await.ok(); // Ignore error if file exists
+    file_io.write(&new_metadata_path, metadata_json).await?;
 
     // 6. Update catalog to point to new metadata
     let old_metadata_path = table.metadata_location();
@@ -199,23 +196,23 @@ pub async fn try_commit(
 
 /// Commit a transaction with automatic retry on concurrent modification
 pub async fn commit_transaction(
-    transaction: Transaction<'_>,
+    transaction: Transaction,
     catalog: &dyn crate::catalog::Catalog,
 ) -> Result<()> {
     const MAX_RETRIES: u32 = 3;
 
+    let mut transaction = transaction;
+
     for attempt in 0..MAX_RETRIES {
         match try_commit(&transaction, catalog).await {
             Ok(()) => return Ok(()),
-            Err(Error::ConcurrentModification { .. }) => {
+            Err(e @ Error::ConcurrentModification { .. }) => {
                 if attempt == MAX_RETRIES - 1 {
-                    return Err(Error::InvalidInput(format!(
-                        "Max retries ({}) exceeded for commit",
-                        MAX_RETRIES
-                    )));
+                    return Err(e);
                 }
-                // Retry immediately without sleep to avoid tokio dependency
-                // In production, the catalog's optimistic locking should handle concurrency
+
+                let refreshed_table = catalog.load_table(transaction.table().identifier()).await?;
+                transaction = transaction.rebind_table(refreshed_table);
             }
             Err(e) => return Err(e),
         }

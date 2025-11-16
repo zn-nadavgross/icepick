@@ -1,6 +1,7 @@
 #[cfg(not(target_family = "wasm"))]
 mod arn;
 mod catalog_impl;
+mod catalog_trait;
 mod client;
 pub mod commit_types;
 mod helpers;
@@ -9,6 +10,9 @@ mod types;
 use crate::catalog::{AuthProvider, CatalogError, Result};
 use crate::io::FileIO;
 use reqwest::{Client, Response};
+use tracing::{debug, trace, Level};
+
+const HTTP_TRACE_TARGET: &str = "icepick::http";
 
 /// Shared Iceberg REST catalog implementation
 pub struct IcebergRestCatalog {
@@ -59,8 +63,14 @@ impl IcebergRestCatalog {
 
     async fn send_request(&self, req: reqwest::Request) -> Result<Response> {
         let signed_req = self.auth_provider.sign_request(req).await?;
-
-        eprintln!("DEBUG: Request headers: {:?}", signed_req.headers());
+        if tracing::enabled!(Level::DEBUG) {
+            debug!(
+                target: HTTP_TRACE_TARGET,
+                method = %signed_req.method(),
+                url = %signed_req.url(),
+                "Sending HTTP request"
+            );
+        }
 
         let response = self
             .http_client
@@ -73,6 +83,13 @@ impl IcebergRestCatalog {
 
     async fn handle_response(&self, response: Response) -> Result<serde_json::Value> {
         let status = response.status();
+        if tracing::enabled!(Level::DEBUG) {
+            debug!(
+                target: HTTP_TRACE_TARGET,
+                status = status.as_u16(),
+                "Received HTTP response"
+            );
+        }
 
         match status.as_u16() {
             200..=299 => {
@@ -80,7 +97,14 @@ impl IcebergRestCatalog {
                 let body_text = response.text().await.map_err(|e| {
                     CatalogError::HttpError(format!("Failed to read response body: {}", e))
                 })?;
-                eprintln!("DEBUG: {} response body: {}", status, body_text);
+                if tracing::enabled!(Level::TRACE) {
+                    trace!(
+                        target: HTTP_TRACE_TARGET,
+                        status = status.as_u16(),
+                        body = body_text,
+                        "Response body"
+                    );
+                }
 
                 // Handle empty responses (204 No Content or empty body)
                 if body_text.is_empty() || status.as_u16() == 204 {
@@ -97,7 +121,14 @@ impl IcebergRestCatalog {
                     .text()
                     .await
                     .unwrap_or_else(|_| "Unable to read response".to_string());
-                eprintln!("DEBUG: 403 response body: {}", body);
+                if tracing::enabled!(Level::TRACE) {
+                    trace!(
+                        target: HTTP_TRACE_TARGET,
+                        status = status.as_u16(),
+                        body = body,
+                        "Error response body"
+                    );
+                }
                 Err(CatalogError::AuthError(format!(
                     "Authentication failed: {}",
                     body
@@ -109,7 +140,14 @@ impl IcebergRestCatalog {
                     .text()
                     .await
                     .unwrap_or_else(|_| "Resource not found".to_string());
-                eprintln!("DEBUG: 404 response body: {}", body);
+                if tracing::enabled!(Level::TRACE) {
+                    trace!(
+                        target: HTTP_TRACE_TARGET,
+                        status = status.as_u16(),
+                        body = body,
+                        "Error response body"
+                    );
+                }
                 Err(CatalogError::NotFound(body))
             }
 
@@ -118,7 +156,14 @@ impl IcebergRestCatalog {
                     .text()
                     .await
                     .unwrap_or_else(|_| "Conflict".to_string());
-                eprintln!("DEBUG: 409 response body: {}", body);
+                if tracing::enabled!(Level::TRACE) {
+                    trace!(
+                        target: HTTP_TRACE_TARGET,
+                        status = status.as_u16(),
+                        body = body,
+                        "Error response body"
+                    );
+                }
                 Err(CatalogError::Conflict(format!(
                     "Requirements not met: {}",
                     body
@@ -130,7 +175,14 @@ impl IcebergRestCatalog {
                     .text()
                     .await
                     .unwrap_or_else(|_| "Bad request".to_string());
-                eprintln!("DEBUG: 400 response body: {}", body);
+                if tracing::enabled!(Level::TRACE) {
+                    trace!(
+                        target: HTTP_TRACE_TARGET,
+                        status = status.as_u16(),
+                        body = body,
+                        "Error response body"
+                    );
+                }
                 Err(CatalogError::InvalidRequest(body))
             }
 
@@ -139,7 +191,14 @@ impl IcebergRestCatalog {
                     .text()
                     .await
                     .unwrap_or_else(|_| "Unknown error".to_string());
-                eprintln!("DEBUG: {} response body: {}", status, body);
+                if tracing::enabled!(Level::TRACE) {
+                    trace!(
+                        target: HTTP_TRACE_TARGET,
+                        status = status.as_u16(),
+                        body = body,
+                        "Error response body"
+                    );
+                }
                 Err(CatalogError::Unexpected(format!(
                     "HTTP {}: {}",
                     status, body

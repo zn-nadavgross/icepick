@@ -19,6 +19,7 @@ parquet = { version = "55.2.0", default-features = false, features = ["arrow"] }
 flate2 = "1.1.5"
 futures = "0.3"
 bytes = "1.0"
+tracing = { version = "0.1", features = ["std"] }
 
 # Non-WASM targets (native platforms)
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
@@ -41,3 +42,4 @@ futures = "0.3"
 uuid = { version = "1.11", features = ["v4"] }
 dotenvy = "0.15"
 percent-encoding = "2.3"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }

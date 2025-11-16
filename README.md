@@ -1,8 +1,10 @@
-# Icepick
+# icepick
 
-**Production-ready cloud Iceberg catalogs for Rust**
+**Experimental client for Apache Iceberg in Rust**
 
-Icepick provides simple access to Apache Iceberg tables in AWS S3 Tables and Cloudflare R2 Data Catalog. Built on the official [iceberg-rust](https://github.com/apache/iceberg-rust) library, Icepick handles authentication, REST API details, and platform compatibility so you can focus on working with your data.
+icepick provides simple access to Apache Iceberg tables in AWS S3 Tables and Cloudflare R2 Data Catalog. Built on the official [iceberg-rust](https://github.com/apache/iceberg-rust) library, Icepick handles authentication, REST API details, and platform compatibility so you can focus on working with your data.
+
+Why not use [iceberg-rust](https://github.com/apache/iceberg-rust)? This project targets wasm as a compliation target (not supported yet in `iceberg-rust`) and is focused on "serverless" catalogs that implement a subset of the overall Iceberg specification.
 
 ## Features
 
@@ -51,8 +53,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         &"namespace.table_name".parse()?
     ).await?;
 
-    println!("Table location: {}", table.metadata().location());
-
     Ok(())
 }
 ```
@@ -76,8 +76,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let table = catalog.load_table(
         &"namespace.table_name".parse()?
     ).await?;
-
-    println!("Table location: {}", table.metadata().location());
 
     Ok(())
 }

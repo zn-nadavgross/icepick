@@ -43,6 +43,19 @@ pub struct CreateTableResponse {
 
 pub type LoadTableResponse = CreateTableResponse;
 
+#[derive(Deserialize)]
+#[allow(dead_code)]
+pub struct ListTablesResponse {
+    pub identifiers: Vec<TableIdentifier>,
+}
+
+#[derive(Deserialize)]
+#[allow(dead_code)]
+pub struct TableIdentifier {
+    pub namespace: Vec<String>,
+    pub name: String,
+}
+
 #[allow(dead_code)]
 #[derive(Serialize)]
 pub struct UpdateTableRequest {

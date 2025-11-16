@@ -53,7 +53,6 @@ impl IcebergRestCatalog {
 
         // Call /v1/config to get server configuration (per Iceberg REST spec)
         let config_url = format!("{}/v1/config?warehouse={}", endpoint, warehouse);
-        eprintln!("DEBUG: Fetching config from URL: {}", config_url);
 
         let req = http_client.get(&config_url).build().map_err(|e| {
             CatalogError::HttpError(format!("Failed to build config request: {}", e))
@@ -61,7 +60,6 @@ impl IcebergRestCatalog {
 
         // Sign the request with auth
         let signed_req = auth.sign_request(req).await?;
-        eprintln!("DEBUG: Config request headers: {:?}", signed_req.headers());
 
         let response = http_client
             .execute(signed_req)
@@ -73,11 +71,6 @@ impl IcebergRestCatalog {
             .text()
             .await
             .unwrap_or_else(|_| "Unable to read response".to_string());
-
-        eprintln!(
-            "DEBUG: Config response status: {}, body: {}",
-            status, body_text
-        );
 
         if !status.is_success() {
             return Err(CatalogError::HttpError(format!(
@@ -98,12 +91,9 @@ impl IcebergRestCatalog {
 
         // Extract prefix from server configuration (defaults to empty string)
         let prefix = properties.get("prefix").cloned().unwrap_or_default();
-        eprintln!("DEBUG: Using prefix from server: '{}'", prefix);
-        eprintln!("DEBUG: Config properties: {:?}", properties);
 
         // Configure FileIO for R2 S3-compatible storage using opendal
         let r2_endpoint = format!("https://{}.r2.cloudflarestorage.com", config.account_id);
-        eprintln!("DEBUG: Setting S3 endpoint to: {}", r2_endpoint);
 
         let mut s3_config_vec = vec![
             ("endpoint".to_string(), r2_endpoint),
@@ -113,7 +103,6 @@ impl IcebergRestCatalog {
         // Apply properties from config response
         for (key, value) in &properties {
             if key.starts_with("s3.") {
-                eprintln!("DEBUG: FileIO property: {}={}", key, value);
                 let opendal_key = key.strip_prefix("s3.").unwrap_or(key).to_string();
                 s3_config_vec.push((opendal_key, value.clone()));
             }
@@ -192,13 +181,6 @@ impl IcebergRestCatalog {
         let url = self.url(&format!("namespaces/{}/tables/{}", namespace, table_name));
 
         // Diagnostic logging for debugging
-        eprintln!("DEBUG: Commit table URL: {}", url);
-        eprintln!(
-            "DEBUG: Commit request: {}",
-            serde_json::to_string_pretty(&request)
-                .unwrap_or_else(|_| "Failed to serialize".to_string())
-        );
-
         let req = self
             .http_client
             .post(&url)
@@ -207,8 +189,6 @@ impl IcebergRestCatalog {
             .map_err(|e| CatalogError::HttpError(format!("Failed to build request: {}", e)))?;
 
         let response = self.send_request(req).await?;
-
-        eprintln!("DEBUG: Commit response status: {}", response.status());
 
         if response.status().as_u16() == 409 {
             return Err(CatalogError::Conflict(

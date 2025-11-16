@@ -19,7 +19,7 @@ fn test_table_metadata_basic() {
         .unwrap();
 
     assert_eq!(metadata.location(), "s3://bucket/warehouse/db/table");
-    assert_eq!(metadata.current_schema().schema_id(), 0);
+    assert_eq!(metadata.current_schema().unwrap().schema_id(), 0);
 }
 
 #[test]

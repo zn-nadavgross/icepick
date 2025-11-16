@@ -29,9 +29,14 @@ impl crate::catalog::Catalog for IcebergRestCatalog {
             .header("Content-Type", "application/json")
             .json(&body)
             .build()
-            .map_err(|e| crate::error::Error::io_error(format!("Failed to build request: {}", e)))?;
+            .map_err(|e| {
+                crate::error::Error::io_error(format!("Failed to build request: {}", e))
+            })?;
 
-        let response = self.send_request(req).await.map_err(helpers::from_catalog_error)?;
+        let response = self
+            .send_request(req)
+            .await
+            .map_err(helpers::from_catalog_error)?;
         let _json_value = self
             .handle_response(response)
             .await
@@ -40,9 +45,12 @@ impl crate::catalog::Catalog for IcebergRestCatalog {
         Ok(())
     }
 
-    async fn namespace_exists(&self, _namespace: &crate::spec::NamespaceIdent) -> crate::error::Result<bool> {
+    async fn namespace_exists(
+        &self,
+        _namespace: &crate::spec::NamespaceIdent,
+    ) -> crate::error::Result<bool> {
         Err(crate::error::Error::unexpected(
-            "Checking namespace existence is not supported"
+            "Checking namespace existence is not supported",
         ))
     }
 
@@ -51,7 +59,7 @@ impl crate::catalog::Catalog for IcebergRestCatalog {
         _namespace: &crate::spec::NamespaceIdent,
     ) -> crate::error::Result<Vec<crate::spec::TableIdent>> {
         Err(crate::error::Error::unexpected(
-            "Listing tables is not supported"
+            "Listing tables is not supported",
         ))
     }
 
@@ -98,7 +106,10 @@ impl crate::catalog::Catalog for IcebergRestCatalog {
                 crate::error::Error::io_error(format!("Failed to build request: {}", e))
             })?;
 
-        let response = self.send_request(req).await.map_err(helpers::from_catalog_error)?;
+        let response = self
+            .send_request(req)
+            .await
+            .map_err(helpers::from_catalog_error)?;
         let json_value = self
             .handle_response(response)
             .await
@@ -109,11 +120,15 @@ impl crate::catalog::Catalog for IcebergRestCatalog {
                 crate::error::Error::invalid_input(format!("Failed to parse table response: {}", e))
             })?;
 
-        let table_ident = crate::spec::TableIdent::new(namespace.clone(), creation.name().to_string());
+        let table_ident =
+            crate::spec::TableIdent::new(namespace.clone(), creation.name().to_string());
         helpers::build_table(table_ident, table_response.metadata, self.file_io.clone())
     }
 
-    async fn load_table(&self, table: &crate::spec::TableIdent) -> crate::error::Result<crate::table::Table> {
+    async fn load_table(
+        &self,
+        table: &crate::spec::TableIdent,
+    ) -> crate::error::Result<crate::table::Table> {
         let namespace_name = table.namespace().to_string();
         let url = self.url(&format!(
             "namespaces/{}/tables/{}",
@@ -131,7 +146,10 @@ impl crate::catalog::Catalog for IcebergRestCatalog {
                 crate::error::Error::io_error(format!("Failed to build request: {}", e))
             })?;
 
-        let response = self.send_request(req).await.map_err(helpers::from_catalog_error)?;
+        let response = self
+            .send_request(req)
+            .await
+            .map_err(helpers::from_catalog_error)?;
         let json_value = self
             .handle_response(response)
             .await
@@ -147,7 +165,7 @@ impl crate::catalog::Catalog for IcebergRestCatalog {
 
     async fn drop_table(&self, _table: &crate::spec::TableIdent) -> crate::error::Result<()> {
         Err(crate::error::Error::unexpected(
-            "Dropping tables is not supported"
+            "Dropping tables is not supported",
         ))
     }
 
@@ -158,16 +176,13 @@ impl crate::catalog::Catalog for IcebergRestCatalog {
         new_metadata_location: &str,
     ) -> crate::error::Result<()> {
         // 1. Load current metadata to get current snapshot ID
-        let current_metadata_bytes = self
-            .file_io
-            .read(old_metadata_location)
-            .await
-            .map_err(|e| {
-                crate::error::Error::io_error(format!(
-                    "Failed to read old metadata: {}",
-                    e
-                ))
-            })?;
+        let current_metadata_bytes =
+            self.file_io
+                .read(old_metadata_location)
+                .await
+                .map_err(|e| {
+                    crate::error::Error::io_error(format!("Failed to read old metadata: {}", e))
+                })?;
 
         let current_metadata: crate::spec::TableMetadata =
             serde_json::from_slice(&current_metadata_bytes).map_err(|e| {
@@ -184,18 +199,12 @@ impl crate::catalog::Catalog for IcebergRestCatalog {
             .read(new_metadata_location)
             .await
             .map_err(|e| {
-                crate::error::Error::io_error(format!(
-                    "Failed to read new metadata: {}",
-                    e
-                ))
+                crate::error::Error::io_error(format!("Failed to read new metadata: {}", e))
             })?;
 
         let new_metadata: crate::spec::TableMetadata = serde_json::from_slice(&new_metadata_bytes)
             .map_err(|e| {
-                crate::error::Error::invalid_input(format!(
-                    "Failed to parse new metadata: {}",
-                    e
-                ))
+                crate::error::Error::invalid_input(format!("Failed to parse new metadata: {}", e))
             })?;
         let new_snapshot_id = new_metadata.current_snapshot_id().ok_or_else(|| {
             crate::error::Error::invalid_input("New metadata has no snapshot".to_string())

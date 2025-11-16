@@ -4,9 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# Core Iceberg
-iceberg = "0.7.0"
-
 # HTTP and serialization
 reqwest = { version = "0.12", features = ["json"] }
 http = "1.0"

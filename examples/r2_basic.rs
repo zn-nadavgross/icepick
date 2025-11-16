@@ -1,17 +1,8 @@
 use anyhow::{Context, Result};
-use futures::stream::StreamExt;
-use iceberg::spec::{DataFileFormat, NestedField, PrimitiveType, Schema, Type};
-use iceberg::transaction::{ApplyTransactionAction, Transaction};
-use iceberg::writer::base_writer::data_file_writer::DataFileWriterBuilder;
-use iceberg::writer::file_writer::location_generator::{
-    DefaultFileNameGenerator, DefaultLocationGenerator,
-};
-use iceberg::writer::file_writer::ParquetWriterBuilder;
-use iceberg::writer::{IcebergWriter, IcebergWriterBuilder};
-use iceberg::NamespaceIdent;
-use iceberg::{Catalog, TableCreation};
+use icepick::catalog::Catalog;
+use icepick::spec::{NamespaceIdent, NestedField, PrimitiveType, Schema, TableCreation, Type};
+use icepick::writer::ParquetWriter;
 use icepick::R2Catalog;
-use parquet::file::properties::WriterProperties;
 
 /// Create R2 Data Catalog with Bearer token authentication from .env
 async fn create_r2_catalog_from_env() -> Result<R2Catalog> {
@@ -48,8 +39,9 @@ fn build_schema() -> Result<Schema> {
 }
 
 use arrow::array::Int64Array;
+use arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
 use arrow::record_batch::RecordBatch;
-use iceberg::arrow::schema_to_arrow_schema;
+use icepick::arrow_convert::schema_to_arrow;
 use std::sync::Arc;
 
 /// Create sample data: [1, 2, 3]
@@ -58,7 +50,7 @@ fn create_sample_data(iceberg_schema: &Schema) -> Result<RecordBatch> {
     let id_array = Int64Array::from(vec![1, 2, 3]);
 
     // Convert Iceberg schema to Arrow schema - this adds PARQUET:field_id metadata
-    let arrow_schema = schema_to_arrow_schema(iceberg_schema)
+    let arrow_schema = schema_to_arrow(iceberg_schema)
         .context("Failed to convert Iceberg schema to Arrow schema")?;
 
     let batch = RecordBatch::try_new(Arc::new(arrow_schema), vec![Arc::new(id_array)])

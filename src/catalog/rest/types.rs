@@ -1,5 +1,5 @@
-use crate::spec::{Schema, TableMetadata};
 use super::commit_types::{TableRequirement, TableUpdate};
+use crate::spec::{Schema, TableMetadata};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -41,12 +41,14 @@ pub struct CreateTableResponse {
 
 pub type LoadTableResponse = CreateTableResponse;
 
+#[allow(dead_code)]
 #[derive(Serialize)]
 pub struct UpdateTableRequest {
     pub requirements: Vec<TableRequirement>,
     pub updates: Vec<TableUpdate>,
 }
 
+#[allow(dead_code)]
 pub type UpdateTableResponse = CreateTableResponse;
 
 #[derive(Deserialize, Debug)]

@@ -150,56 +150,6 @@ impl Error {
     }
 }
 
-// Conversion to iceberg::Error for compatibility with iceberg::Catalog trait
-impl From<Error> for iceberg::Error {
-    fn from(err: Error) -> Self {
-        match err {
-            Error::NotFound { resource } => {
-                iceberg::Error::new(iceberg::ErrorKind::DataInvalid, resource)
-            }
-            Error::Unauthorized { provider } => {
-                iceberg::Error::new(iceberg::ErrorKind::Unexpected, provider)
-            }
-            Error::Forbidden { resource } => {
-                iceberg::Error::new(iceberg::ErrorKind::Unexpected, resource)
-            }
-            Error::Conflict { message } => {
-                iceberg::Error::new(iceberg::ErrorKind::DataInvalid, message)
-            }
-            Error::InvalidRequest { message } => {
-                iceberg::Error::new(iceberg::ErrorKind::DataInvalid, message)
-            }
-            Error::ServerError { status, message } => iceberg::Error::new(
-                iceberg::ErrorKind::Unexpected,
-                format!("Server error {}: {}", status, message),
-            ),
-            Error::NetworkError { source } => {
-                iceberg::Error::new(iceberg::ErrorKind::Unexpected, source.to_string())
-            }
-            Error::InvalidArn { arn } => iceberg::Error::new(
-                iceberg::ErrorKind::DataInvalid,
-                format!("Invalid ARN: {}", arn),
-            ),
-            Error::InvalidConfig { message } => {
-                iceberg::Error::new(iceberg::ErrorKind::DataInvalid, message)
-            }
-            Error::JsonError { source } => {
-                iceberg::Error::new(iceberg::ErrorKind::Unexpected, source.to_string())
-            }
-            Error::Unexpected { message } => {
-                iceberg::Error::new(iceberg::ErrorKind::Unexpected, message)
-            }
-            Error::InvalidInput(message) => {
-                iceberg::Error::new(iceberg::ErrorKind::DataInvalid, message)
-            }
-            Error::IoError(message) => iceberg::Error::new(iceberg::ErrorKind::Unexpected, message),
-            Error::ConcurrentModification { message } => {
-                iceberg::Error::new(iceberg::ErrorKind::DataInvalid, message)
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

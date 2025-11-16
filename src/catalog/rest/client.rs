@@ -115,8 +115,10 @@ impl IcebergRestCatalog {
             }
         }
 
-        let operator = opendal::Operator::via_iter(opendal::Scheme::S3, s3_config_vec)
-            .map_err(|e| CatalogError::Unexpected(format!("Failed to create S3 operator: {}", e)))?;
+        let operator =
+            opendal::Operator::via_iter(opendal::Scheme::S3, s3_config_vec).map_err(|e| {
+                CatalogError::Unexpected(format!("Failed to create S3 operator: {}", e))
+            })?;
         let file_io = FileIO::new(operator);
 
         Ok(Self {
@@ -156,12 +158,12 @@ impl IcebergRestCatalog {
         let http_client = Client::new();
 
         // Create FileIO for S3 access using opendal
-        let s3_config = vec![
-            ("region".to_string(), region),
-        ];
+        let s3_config = vec![("region".to_string(), region)];
 
-        let operator = opendal::Operator::via_iter(opendal::Scheme::S3, s3_config)
-            .map_err(|e| CatalogError::Unexpected(format!("Failed to create S3 operator: {}", e)))?;
+        let operator =
+            opendal::Operator::via_iter(opendal::Scheme::S3, s3_config).map_err(|e| {
+                CatalogError::Unexpected(format!("Failed to create S3 operator: {}", e))
+            })?;
         let file_io = FileIO::new(operator);
 
         Ok(Self {

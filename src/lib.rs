@@ -9,8 +9,8 @@
 //!
 //! ```no_run
 //! use icepick::S3TablesCatalog;
-//! use iceberg::Catalog;
-//! use iceberg::TableIdent;
+//! use icepick::catalog::Catalog;
+//! use icepick::spec::{TableIdent, NamespaceIdent};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let catalog = S3TablesCatalog::from_arn(
@@ -18,7 +18,8 @@
 //!     "arn:aws:s3tables:us-west-2:123456789012:bucket/my-bucket"
 //! ).await?;
 //!
-//! let table_id = TableIdent::from_strs(["namespace", "table"])?;
+//! let namespace = NamespaceIdent::new(vec!["namespace".to_string()]);
+//! let table_id = TableIdent::new(namespace, "table".to_string());
 //! let table = catalog.load_table(&table_id).await?;
 //! # Ok(())
 //! # }
@@ -28,8 +29,8 @@
 //!
 //! ```no_run
 //! use icepick::R2Catalog;
-//! use iceberg::Catalog;
-//! use iceberg::TableIdent;
+//! use icepick::catalog::Catalog;
+//! use icepick::spec::{TableIdent, NamespaceIdent};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let catalog = R2Catalog::new(
@@ -39,7 +40,8 @@
 //!     "api-token"
 //! ).await?;
 //!
-//! let table_id = TableIdent::from_strs(["namespace", "table"])?;
+//! let namespace = NamespaceIdent::new(vec!["namespace".to_string()]);
+//! let table_id = TableIdent::new(namespace, "table".to_string());
 //! let table = catalog.load_table(&table_id).await?;
 //! # Ok(())
 //! # }

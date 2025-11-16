@@ -25,8 +25,8 @@ use std::collections::HashMap;
 ///
 /// ```no_run
 /// use icepick::R2Catalog;
-/// use iceberg::Catalog;
-/// use iceberg::TableIdent;
+/// use icepick::catalog::Catalog;
+/// use icepick::spec::{TableIdent, NamespaceIdent};
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// // Create catalog for R2
@@ -38,7 +38,8 @@ use std::collections::HashMap;
 /// ).await?;
 ///
 /// // Use the catalog
-/// let table_id = TableIdent::from_strs(["my_namespace", "my_table"])?;
+/// let namespace = NamespaceIdent::new(vec!["my_namespace".to_string()]);
+/// let table_id = TableIdent::new(namespace, "my_table".to_string());
 /// let table = catalog.load_table(&table_id).await?;
 /// # Ok(())
 /// # }

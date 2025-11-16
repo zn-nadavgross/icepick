@@ -6,4 +6,4 @@
 
 pub mod identifier;
 
-pub use identifier::NamespaceIdent;
+pub use identifier::{NamespaceIdent, TableIdent};

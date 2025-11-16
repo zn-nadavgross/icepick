@@ -57,3 +57,44 @@ impl<'a> From<&'a [&'a str]> for NamespaceIdent {
         Self::from_strs(parts)
     }
 }
+
+/// Identifier for a table
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TableIdent {
+    namespace: NamespaceIdent,
+    name: String,
+}
+
+impl TableIdent {
+    /// Create a new table identifier
+    pub fn new(namespace: NamespaceIdent, name: String) -> Self {
+        assert!(!name.is_empty(), "Table name cannot be empty");
+        Self { namespace, name }
+    }
+
+    /// Create from string slices
+    pub fn from_strs(namespace: &[&str], name: &str) -> Self {
+        Self::new(NamespaceIdent::from_strs(namespace), name.to_string())
+    }
+
+    /// Get the namespace
+    pub fn namespace(&self) -> &NamespaceIdent {
+        &self.namespace
+    }
+
+    /// Get the table name
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Consume and return namespace and name
+    pub fn into_parts(self) -> (NamespaceIdent, String) {
+        (self.namespace, self.name)
+    }
+}
+
+impl fmt::Display for TableIdent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}.{}", self.namespace, self.name)
+    }
+}

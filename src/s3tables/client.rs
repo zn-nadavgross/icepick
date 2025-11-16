@@ -130,6 +130,53 @@ impl S3TablesClient {
 
         Ok(response)
     }
+
+    async fn handle_response(&self, response: Response) -> Result<serde_json::Value> {
+        let status = response.status();
+
+        match status.as_u16() {
+            200..=299 => {
+                response.json().await
+                    .map_err(|e| S3TablesError::HttpError(
+                        format!("Failed to parse JSON response: {}", e)
+                    ))
+            }
+
+            403 => {
+                let body = response.text().await
+                    .unwrap_or_else(|_| "Unable to read response".to_string());
+                Err(S3TablesError::AuthError(
+                    format!("Authentication failed: {}", body)
+                ))
+            }
+
+            404 => {
+                Err(S3TablesError::NotFound("Resource not found".to_string()))
+            }
+
+            409 => {
+                let body = response.text().await
+                    .unwrap_or_else(|_| "Conflict".to_string());
+                Err(S3TablesError::Conflict(
+                    format!("Requirements not met: {}", body)
+                ))
+            }
+
+            400 => {
+                let body = response.text().await
+                    .unwrap_or_else(|_| "Bad request".to_string());
+                Err(S3TablesError::InvalidRequest(body))
+            }
+
+            _ => {
+                let body = response.text().await
+                    .unwrap_or_else(|_| "Unknown error".to_string());
+                Err(S3TablesError::Unexpected(
+                    format!("HTTP {}: {}", status, body)
+                ))
+            }
+        }
+    }
 }
 
 #[cfg(test)]

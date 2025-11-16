@@ -28,4 +28,21 @@ pub trait Catalog: Send + Sync {
 
     /// Delete a table
     async fn drop_table(&self, identifier: &TableIdent) -> Result<()>;
+
+    /// Update table metadata location atomically
+    ///
+    /// This method atomically updates the catalog's pointer to the table metadata.
+    /// If the current metadata location doesn't match `old_metadata_location`,
+    /// returns a ConcurrentModification error.
+    ///
+    /// # Arguments
+    /// * `identifier` - The table identifier
+    /// * `old_metadata_location` - Expected current metadata location (for optimistic locking)
+    /// * `new_metadata_location` - New metadata location to set
+    async fn update_table_metadata(
+        &self,
+        identifier: &TableIdent,
+        old_metadata_location: &str,
+        new_metadata_location: &str,
+    ) -> Result<()>;
 }

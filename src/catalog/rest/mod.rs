@@ -1,131 +1,23 @@
+mod arn;
+mod types;
+
+use self::arn::{parse_s3tables_arn, ARN_ENCODE_SET};
+use self::types::*;
 use crate::catalog::{AuthProvider, CatalogError, R2Config, Result};
 use async_trait::async_trait;
 use iceberg::io::FileIO;
-use iceberg::spec::{Schema, TableMetadata};
+use iceberg::spec::TableMetadata;
 use iceberg::table::Table;
 use iceberg::{
     Catalog, Error as IcebergError, ErrorKind, Namespace, NamespaceIdent,
-    Result as IcebergResult, TableCommit, TableCreation, TableIdent, TableRequirement, TableUpdate,
+    Result as IcebergResult, TableCommit, TableCreation, TableIdent,
 };
-use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
+use percent_encoding::utf8_percent_encode;
 use reqwest::{Client, Response};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 #[cfg(not(target_family = "wasm"))]
 use aws_credential_types::provider::ProvideCredentials;
-
-// Request/Response types for Iceberg REST API
-#[derive(Serialize)]
-struct CreateNamespaceRequest {
-    namespace: Vec<String>,
-    properties: HashMap<String, String>,
-}
-
-#[derive(Deserialize)]
-#[allow(dead_code)]
-struct CreateNamespaceResponse {
-    namespace: Vec<String>,
-    properties: HashMap<String, String>,
-}
-
-#[derive(Serialize)]
-struct CreateTableRequest {
-    name: String,
-    schema: Schema,
-    location: Option<String>,
-    #[serde(rename = "partition-spec")]
-    partition_spec: serde_json::Value,
-    #[serde(rename = "write-order")]
-    write_order: serde_json::Value,
-    properties: HashMap<String, String>,
-    #[serde(rename = "stage-create")]
-    stage_create: bool,
-}
-
-#[derive(Deserialize)]
-#[allow(dead_code)]
-struct CreateTableResponse {
-    metadata: TableMetadata,
-    #[serde(rename = "metadata-location")]
-    metadata_location: String,
-}
-
-type LoadTableResponse = CreateTableResponse;
-
-#[derive(Serialize)]
-struct UpdateTableRequest {
-    requirements: Vec<TableRequirement>,
-    updates: Vec<TableUpdate>,
-}
-
-type UpdateTableResponse = CreateTableResponse;
-
-// Define encoding set for ARN in path
-const ARN_ENCODE_SET: &AsciiSet = &CONTROLS
-    .add(b' ')
-    .add(b'!')
-    .add(b'"')
-    .add(b'#')
-    .add(b'$')
-    .add(b'%')
-    .add(b'&')
-    .add(b'\'')
-    .add(b'(')
-    .add(b')')
-    .add(b'*')
-    .add(b'+')
-    .add(b',')
-    .add(b'/')
-    .add(b':')
-    .add(b';')
-    .add(b'<')
-    .add(b'=')
-    .add(b'>')
-    .add(b'?')
-    .add(b'@')
-    .add(b'[')
-    .add(b'\\')
-    .add(b']')
-    .add(b'^')
-    .add(b'`')
-    .add(b'{')
-    .add(b'|')
-    .add(b'}');
-
-/// Parse S3 Tables ARN and extract region and bucket name
-/// ARN format: arn:aws:s3tables:region:account:bucket/name
-fn parse_s3tables_arn(arn: &str) -> Result<(String, String)> {
-    let parts: Vec<&str> = arn.split(':').collect();
-
-    if parts.len() != 6 {
-        return Err(CatalogError::InvalidArn(format!(
-            "Expected 6 parts, got {}",
-            parts.len()
-        )));
-    }
-
-    if parts[0] != "arn" {
-        return Err(CatalogError::InvalidArn(
-            "Must start with 'arn'".to_string(),
-        ));
-    }
-
-    if parts[2] != "s3tables" {
-        return Err(CatalogError::InvalidArn(format!(
-            "Not an S3 Tables ARN: {}",
-            parts[2]
-        )));
-    }
-
-    let region = parts[3].to_string();
-    let bucket_name = parts[5]
-        .strip_prefix("bucket/")
-        .ok_or_else(|| CatalogError::InvalidArn("Missing 'bucket/' prefix".to_string()))?
-        .to_string();
-
-    Ok((region, bucket_name))
-}
 
 /// Shared Iceberg REST catalog implementation
 pub struct IcebergRestCatalog {
@@ -304,6 +196,20 @@ impl IcebergRestCatalog {
             }
         }
     }
+
+    fn build_table(&self, ident: TableIdent, metadata: TableMetadata) -> IcebergResult<Table> {
+        let metadata_location = format!(
+            "{}/metadata/00000-initial.metadata.json",
+            metadata.location()
+        );
+
+        Table::builder()
+            .identifier(ident)
+            .metadata(metadata)
+            .metadata_location(metadata_location)
+            .file_io(self.file_io.clone())
+            .build()
+    }
 }
 
 fn to_iceberg_error(e: CatalogError) -> IcebergError {
@@ -395,5 +301,141 @@ impl Catalog for IcebergRestCatalog {
             ErrorKind::FeatureUnsupported,
             "Listing tables is not supported",
         ))
+    }
+
+    async fn create_table(
+        &self,
+        namespace: &NamespaceIdent,
+        creation: TableCreation,
+    ) -> IcebergResult<Table> {
+        let namespace_name = namespace.to_string();
+        let url = format!(
+            "{}/{}/namespaces/{}/tables",
+            self.endpoint, self.prefix, namespace_name
+        );
+
+        let body = CreateTableRequest {
+            name: creation.name.clone(),
+            schema: creation.schema,
+            location: None,
+            partition_spec: serde_json::json!({
+                "spec-id": 0,
+                "fields": []
+            }),
+            write_order: serde_json::json!({
+                "order-id": 0,
+                "fields": []
+            }),
+            properties: HashMap::new(),
+            stage_create: false,
+        };
+
+        let req = self
+            .http_client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .build()
+            .map_err(|e| IcebergError::new(ErrorKind::Unexpected, format!("Failed to build request: {}", e)))?;
+
+        let response = self.send_request(req).await.map_err(to_iceberg_error)?;
+        let json_value = self.handle_response(response).await.map_err(to_iceberg_error)?;
+
+        let table_response: CreateTableResponse = serde_json::from_value(json_value)
+            .map_err(|e| IcebergError::new(ErrorKind::Unexpected, format!("Failed to parse table response: {}", e)))?;
+
+        let table_ident = TableIdent::new(namespace.clone(), creation.name);
+        self.build_table(table_ident, table_response.metadata)
+    }
+
+    async fn load_table(&self, table: &TableIdent) -> IcebergResult<Table> {
+        let namespace_name = table.namespace.to_string();
+        let url = format!(
+            "{}/{}/namespaces/{}/tables/{}",
+            self.endpoint, self.prefix, namespace_name, table.name
+        );
+
+        let req = self
+            .http_client
+            .get(&url)
+            .header("Accept", "application/json")
+            .build()
+            .map_err(|e| IcebergError::new(ErrorKind::Unexpected, format!("Failed to build request: {}", e)))?;
+
+        let response = self.send_request(req).await.map_err(to_iceberg_error)?;
+        let json_value = self.handle_response(response).await.map_err(to_iceberg_error)?;
+
+        let table_response: LoadTableResponse = serde_json::from_value(json_value)
+            .map_err(|e| IcebergError::new(ErrorKind::Unexpected, format!("Failed to parse table response: {}", e)))?;
+
+        self.build_table(table.clone(), table_response.metadata)
+    }
+
+    async fn drop_table(&self, _table: &TableIdent) -> IcebergResult<()> {
+        Err(IcebergError::new(
+            ErrorKind::FeatureUnsupported,
+            "Dropping tables is not supported",
+        ))
+    }
+
+    async fn table_exists(&self, table: &TableIdent) -> IcebergResult<bool> {
+        match self.load_table(table).await {
+            Ok(_) => Ok(true),
+            Err(e) if e.to_string().contains("not found") => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn rename_table(&self, _src: &TableIdent, _dest: &TableIdent) -> IcebergResult<()> {
+        Err(IcebergError::new(
+            ErrorKind::FeatureUnsupported,
+            "Renaming tables is not supported",
+        ))
+    }
+
+    async fn register_table(
+        &self,
+        _table: &TableIdent,
+        _metadata_location: String,
+    ) -> IcebergResult<Table> {
+        Err(IcebergError::new(
+            ErrorKind::FeatureUnsupported,
+            "Registering tables is not supported",
+        ))
+    }
+
+    async fn update_table(&self, mut commit: TableCommit) -> IcebergResult<Table> {
+        let namespace_name = commit.identifier().namespace.to_string();
+        let table_name = commit.identifier().name.clone();
+        let table_ident = commit.identifier().clone();
+
+        let url = format!(
+            "{}/{}/namespaces/{}/tables/{}",
+            self.endpoint, self.prefix, namespace_name, table_name
+        );
+
+        let requirements = commit.take_requirements();
+        let updates = commit.take_updates();
+
+        let body = UpdateTableRequest {
+            requirements,
+            updates,
+        };
+
+        let req = self
+            .http_client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .build()
+            .map_err(|e| IcebergError::new(ErrorKind::Unexpected, format!("Failed to build request: {}", e)))?;
+
+        let response = self.send_request(req).await.map_err(to_iceberg_error)?;
+        let json_value = self.handle_response(response).await.map_err(to_iceberg_error)?;
+
+        let table_response: UpdateTableResponse = serde_json::from_value(json_value)
+            .map_err(|e| IcebergError::new(ErrorKind::Unexpected, format!("Failed to parse table response: {}", e)))?;
+
+        self.build_table(table_ident, table_response.metadata)
     }
 }

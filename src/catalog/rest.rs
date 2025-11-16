@@ -233,4 +233,75 @@ impl IcebergRestCatalog {
             name,
         })
     }
+
+    async fn send_request(&self, req: reqwest::Request) -> Result<Response> {
+        let signed_req = self.auth_provider.sign_request(req).await?;
+
+        let response = self
+            .http_client
+            .execute(signed_req)
+            .await
+            .map_err(|e| CatalogError::HttpError(format!("Request failed: {}", e)))?;
+
+        Ok(response)
+    }
+
+    async fn handle_response(&self, response: Response) -> Result<serde_json::Value> {
+        let status = response.status();
+
+        match status.as_u16() {
+            200..=299 => response.json().await.map_err(|e| {
+                CatalogError::HttpError(format!("Failed to parse JSON response: {}", e))
+            }),
+
+            403 => {
+                let body = response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "Unable to read response".to_string());
+                Err(CatalogError::AuthError(format!(
+                    "Authentication failed: {}",
+                    body
+                )))
+            }
+
+            404 => {
+                let body = response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "Resource not found".to_string());
+                Err(CatalogError::NotFound(body))
+            }
+
+            409 => {
+                let body = response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "Conflict".to_string());
+                Err(CatalogError::Conflict(format!(
+                    "Requirements not met: {}",
+                    body
+                )))
+            }
+
+            400 => {
+                let body = response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "Bad request".to_string());
+                Err(CatalogError::InvalidRequest(body))
+            }
+
+            _ => {
+                let body = response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "Unknown error".to_string());
+                Err(CatalogError::Unexpected(format!(
+                    "HTTP {}: {}",
+                    status, body
+                )))
+            }
+        }
+    }
 }

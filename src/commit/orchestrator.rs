@@ -1,6 +1,6 @@
 //! Orchestrate transaction commit with retries
 
-use crate::commit::paths::{manifest_list_path, manifest_path, metadata_path};
+use crate::commit::paths::{manifest_list_path, manifest_path, next_metadata_path};
 use crate::error::{Error, Result};
 use crate::manifest::writer::{write_manifest, write_manifest_list};
 use crate::spec::{Snapshot, Summary};
@@ -166,8 +166,8 @@ pub async fn try_commit(
     }
 
     // 5. Write new metadata file
-    let new_version = metadata.snapshots().len() + 1;
-    let new_metadata_path = metadata_path(table.location(), new_version);
+    let old_metadata_path = table.metadata_location();
+    let new_metadata_path = next_metadata_path(table.location(), old_metadata_path, &commit_uuid);
     let metadata_json = serde_json::to_vec_pretty(&new_metadata)?;
 
     // Debug: Print a snippet of the serialized JSON to see if parent-snapshot-id is there
@@ -186,7 +186,6 @@ pub async fn try_commit(
     file_io.write(&new_metadata_path, metadata_json).await?;
 
     // 6. Update catalog to point to new metadata
-    let old_metadata_path = table.metadata_location();
     catalog
         .update_table_metadata(table.identifier(), old_metadata_path, &new_metadata_path)
         .await?;

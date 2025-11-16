@@ -9,6 +9,7 @@ use super::helpers;
 use super::types::*;
 use super::IcebergRestCatalog;
 use reqwest::StatusCode;
+use tracing::warn;
 
 // Private helper functions containing the actual implementation
 // These are called by the trait implementation in catalog_trait.rs
@@ -194,11 +195,7 @@ impl IcebergRestCatalog {
         table: &crate::spec::TableIdent,
     ) -> crate::error::Result<crate::table::Table> {
         let namespace_name = table.namespace().to_string();
-        let url = self.url(&format!(
-            "namespaces/{}/tables/{}",
-            namespace_name,
-            table.name()
-        ));
+        let url = self.table_url(&namespace_name, table.name(), true);
 
         let req = self
             .http_client
@@ -237,7 +234,7 @@ impl IcebergRestCatalog {
     ) -> crate::error::Result<()> {
         let namespace_name = table.namespace().to_string();
         let url = self.url(&format!(
-            "namespaces/{}/tables/{}",
+            "namespaces/{}/tables/{}?purgeRequested=true",
             namespace_name,
             table.name()
         ));
@@ -309,7 +306,7 @@ impl IcebergRestCatalog {
             })?;
         let current_snapshot_id = current_metadata.current_snapshot_id();
 
-        // 2. Load new metadata to get new snapshot ID
+        // 2. Load new metadata so we can send it to catalog
         let new_metadata_bytes = self
             .file_io
             .read(new_metadata_location)
@@ -325,17 +322,8 @@ impl IcebergRestCatalog {
             .map_err(|e| {
                 crate::error::Error::invalid_input(format!("Failed to parse new metadata: {}", e))
             })?;
-        // Get the new snapshot that was added
-        let new_snapshot = new_metadata
-            .snapshots()
-            .last()
-            .ok_or_else(|| {
-                crate::error::Error::invalid_input("New metadata has no snapshots".to_string())
-            })?
-            .clone();
-        let new_snapshot_id = new_snapshot.snapshot_id();
 
-        // 3. Build commit request with both AddSnapshot and SetSnapshotRef updates
+        // 3. Build commit request that performs a CAS on metadata location
         // Note: -1 means "no snapshot", which should be represented as null in REST API
         // Use assert-ref-snapshot-id with the "main" branch reference
         let snapshot_id_requirement = if current_snapshot_id == Some(-1) {
@@ -343,19 +331,82 @@ impl IcebergRestCatalog {
         } else {
             current_snapshot_id
         };
+
+        let reference = self.options.reference().to_string();
+        let mut requirements = vec![TableRequirement::AssertTableUuid {
+            uuid: current_metadata.table_uuid().to_string(),
+        }];
+        requirements.push(TableRequirement::AssertRefSnapshotId {
+            r#ref: reference.clone(),
+            snapshot_id: snapshot_id_requirement,
+        });
+
         let request = CommitTableRequest {
-            requirements: vec![TableRequirement::AssertRefSnapshotId {
-                r#ref: "main".to_string(),
-                snapshot_id: snapshot_id_requirement,
+            requirements,
+            updates: vec![TableUpdate::SetCurrentTableMetadata {
+                metadata_location: new_metadata_location.to_string(),
+                metadata: Box::new(new_metadata.clone()),
             }],
+        };
+
+        // 4. Send to REST endpoint, with fallback for catalogs that don't support metadata CAS
+        match self.commit_table(identifier, request).await {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                // Check if the error indicates unsupported set-current-table-metadata
+                let is_unsupported = match &err {
+                    crate::catalog::CatalogError::InvalidRequest(ref msg)
+                    | crate::catalog::CatalogError::Unexpected(ref msg) => {
+                        msg.contains("unsupported_table_update")
+                            || msg.contains("unknown variant `set-current-table-metadata`")
+                            || msg.contains("set-current-table-metadata")
+                    }
+                    _ => false,
+                };
+
+                if is_unsupported {
+                    warn!(
+                        "Catalog {} does not support set-current-table-metadata, falling back to legacy snapshot updates",
+                        self.name
+                    );
+                    self.legacy_snapshot_commit(identifier, snapshot_id_requirement, new_metadata)
+                        .await
+                } else {
+                    Err(helpers::from_catalog_error(err))
+                }
+            }
+        }
+    }
+
+    async fn legacy_snapshot_commit(
+        &self,
+        identifier: &crate::spec::TableIdent,
+        snapshot_requirement: Option<i64>,
+        new_metadata: crate::spec::TableMetadata,
+    ) -> crate::error::Result<()> {
+        let new_snapshot = new_metadata.snapshots().last().cloned().ok_or_else(|| {
+            crate::error::Error::invalid_input(
+                "New metadata has no snapshots for legacy commit".to_string(),
+            )
+        })?;
+        let new_snapshot_id = new_snapshot.snapshot_id();
+        let reference = self.options.reference().to_string();
+        let mut requirements = vec![TableRequirement::AssertTableUuid {
+            uuid: new_metadata.table_uuid().to_string(),
+        }];
+        requirements.push(TableRequirement::AssertRefSnapshotId {
+            r#ref: reference.clone(),
+            snapshot_id: snapshot_requirement,
+        });
+
+        let request = CommitTableRequest {
+            requirements,
             updates: vec![
-                // First, add the new snapshot to the table
                 TableUpdate::AddSnapshot {
                     snapshot: new_snapshot,
                 },
-                // Then, update the main branch reference to point to it
                 TableUpdate::SetSnapshotRef {
-                    ref_name: "main".to_string(),
+                    ref_name: reference,
                     snapshot_id: new_snapshot_id,
                     ref_type: "branch".to_string(),
                     min_snapshots_to_keep: None,
@@ -365,11 +416,9 @@ impl IcebergRestCatalog {
             ],
         };
 
-        // 4. Send to REST endpoint
         self.commit_table(identifier, request)
             .await
             .map_err(helpers::from_catalog_error)?;
-
         Ok(())
     }
 }

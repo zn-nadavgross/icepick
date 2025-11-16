@@ -28,10 +28,12 @@ aws-sigv4 = { version = "1.3.6", default-features = false, features = ["sign-htt
 aws-credential-types = { version = "1.2", default-features = false }
 aws-config = { version = "1.8", default-features = false, features = ["rustls", "behavior-version-latest", "rt-tokio"] }
 aws-sdk-sts = { version = "1.55", default-features = false, features = ["rustls", "rt-tokio"] }
+tokio = { version = "1.48.0", default-features = false, features = ["time"] }
 
 # WASM targets
 [target.'cfg(target_family = "wasm")'.dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
+gloo-timers = { version = "0.3", features = ["futures"] }
 
 [dev-dependencies]
 tokio = { version = "1.48.0", features = ["full"] }

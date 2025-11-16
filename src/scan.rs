@@ -5,9 +5,9 @@ use crate::reader::DataFileEntry;
 use crate::table::Table;
 use arrow::record_batch::RecordBatch;
 use bytes::Bytes;
-use futures::stream::StreamExt;
-use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use parquet::arrow::arrow_reader::{ParquetRecordBatchReader, ParquetRecordBatchReaderBuilder};
 use std::pin::Pin;
+use std::vec::IntoIter;
 
 /// A stream of Arrow RecordBatches
 /// On WASM, we don't require Send since WASM is single-threaded
@@ -50,34 +50,56 @@ impl<'a> TableScan<'a> {
         // Clone what we need for the async closure
         let file_io = self.table.file_io().clone();
 
-        // Create a stream that processes files sequentially
-        let stream = futures::stream::iter(files)
-            .then(move |file_entry| {
-                let file_io = file_io.clone();
-                async move { read_parquet_file(&file_io, &file_entry).await }
-            })
-            .flat_map(|result| {
-                match result {
-                    Ok(batches) => {
-                        // Convert Vec<RecordBatch> into a stream
-                        futures::stream::iter(batches.into_iter().map(Ok)).boxed()
-                    }
-                    Err(e) => {
-                        // Single error
-                        futures::stream::iter(vec![Err(e)]).boxed()
+        let state = ScanState {
+            files: files.into_iter(),
+            current_reader: None,
+            file_io,
+        };
+
+        let stream = futures::stream::try_unfold(state, move |mut state| async move {
+            loop {
+                if let Some((ref path, ref mut reader)) = state.current_reader {
+                    match reader.next() {
+                        Some(Ok(batch)) => return Ok(Some((batch, state))),
+                        Some(Err(e)) => {
+                            return Err(Error::invalid_input(format!(
+                                "Failed to read batches from {}: {}",
+                                path, e
+                            )))
+                        }
+                        None => {
+                            state.current_reader = None;
+                            continue;
+                        }
                     }
                 }
-            });
+
+                match state.files.next() {
+                    Some(file_entry) => {
+                        let (path, reader) =
+                            read_parquet_reader(&state.file_io, file_entry).await?;
+                        state.current_reader = Some((path, reader));
+                    }
+                    None => return Ok(None),
+                }
+            }
+        });
 
         Ok(Box::pin(stream))
     }
 }
 
-/// Read a single Parquet file and return all RecordBatches
-async fn read_parquet_file(
+struct ScanState {
+    files: IntoIter<DataFileEntry>,
+    current_reader: Option<(String, ParquetRecordBatchReader)>,
+    file_io: crate::io::FileIO,
+}
+
+/// Read a single Parquet file and return a reader for streaming record batches
+async fn read_parquet_reader(
     file_io: &crate::io::FileIO,
-    file_entry: &DataFileEntry,
-) -> Result<Vec<RecordBatch>> {
+    file_entry: DataFileEntry,
+) -> Result<(String, ParquetRecordBatchReader)> {
     // Read file bytes from storage
     let bytes: Bytes = file_io.read(&file_entry.file_path).await?.into();
 
@@ -96,12 +118,5 @@ async fn read_parquet_file(
         ))
     })?;
 
-    // Collect all batches
-    let batches: std::result::Result<Vec<_>, _> = reader.collect();
-    batches.map_err(|e| {
-        Error::invalid_input(format!(
-            "Failed to read batches from {}: {}",
-            file_entry.file_path, e
-        ))
-    })
+    Ok((file_entry.file_path, reader))
 }

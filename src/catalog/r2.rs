@@ -4,7 +4,7 @@
 //! This catalog uses bearer token authentication and supports both native and WASM platforms.
 
 use crate::catalog::rest::IcebergRestCatalog;
-use crate::catalog::Catalog;
+use crate::catalog::{Catalog, CatalogOptions};
 use crate::error::{Error, Result};
 use crate::spec::{NamespaceIdent, TableCreation, TableIdent};
 use crate::table::Table;
@@ -20,6 +20,9 @@ use std::collections::HashMap;
 ///
 /// Unlike S3TablesCatalog, R2Catalog supports both native platforms and WASM
 /// (wasm32-unknown-unknown), making it suitable for browser and Cloudflare Workers use cases.
+///
+/// Use [`R2Catalog::with_options`] to customize HTTP timeouts, retries, or to target
+/// Iceberg branches other than `main`.
 ///
 /// # Example
 ///
@@ -103,18 +106,56 @@ impl R2Catalog {
 
         let inner = IcebergRestCatalog::from_r2(name, account_id, bucket_name, api_token)
             .await
-            .map_err(|e| match e {
-                #[cfg(not(target_family = "wasm"))]
-                crate::catalog::CatalogError::InvalidArn(msg) => Error::invalid_arn(msg),
-                crate::catalog::CatalogError::AuthError(msg) => Error::unauthorized(msg),
-                crate::catalog::CatalogError::HttpError(msg) => Error::unexpected(msg),
-                crate::catalog::CatalogError::NotFound(msg) => Error::not_found(msg),
-                crate::catalog::CatalogError::Conflict(msg) => Error::conflict(msg),
-                crate::catalog::CatalogError::InvalidRequest(msg) => Error::invalid_request(msg),
-                crate::catalog::CatalogError::Unexpected(msg) => Error::unexpected(msg),
-            })?;
+            .map_err(map_catalog_error)?;
 
         Ok(Self { inner })
+    }
+
+    /// Create a new R2 catalog with explicit options such as branch and HTTP configuration.
+    ///
+    /// * `name` - Logical catalog name.
+    /// * `account_id` / `bucket_name` / `api_token` - Same as [`R2Catalog::new`].
+    /// * `options` - Additional configuration (HTTP timeouts, retries, default reference).
+    pub async fn with_options(
+        name: impl Into<String>,
+        account_id: impl Into<String>,
+        bucket_name: impl Into<String>,
+        api_token: impl Into<String>,
+        options: CatalogOptions,
+    ) -> Result<Self> {
+        let name = name.into();
+        let account_id = account_id.into();
+        let bucket_name = bucket_name.into();
+        let api_token = api_token.into();
+
+        let inner = IcebergRestCatalog::from_r2_with_options(
+            name,
+            account_id,
+            bucket_name,
+            api_token,
+            options,
+        )
+        .await
+        .map_err(map_catalog_error)?;
+
+        Ok(Self { inner })
+    }
+}
+
+fn map_catalog_error(e: crate::catalog::CatalogError) -> Error {
+    match e {
+        #[cfg(not(target_family = "wasm"))]
+        crate::catalog::CatalogError::InvalidArn(msg) => Error::invalid_arn(msg),
+        crate::catalog::CatalogError::AuthError(msg) => Error::unauthorized(msg),
+        crate::catalog::CatalogError::HttpError(msg) => Error::unexpected(msg),
+        crate::catalog::CatalogError::ServerError { status, message } => {
+            Error::server_error(status, message)
+        }
+        crate::catalog::CatalogError::Network(err) => Error::NetworkError { source: err },
+        crate::catalog::CatalogError::NotFound(msg) => Error::not_found(msg),
+        crate::catalog::CatalogError::Conflict(msg) => Error::conflict(msg),
+        crate::catalog::CatalogError::InvalidRequest(msg) => Error::invalid_request(msg),
+        crate::catalog::CatalogError::Unexpected(msg) => Error::unexpected(msg),
     }
 }
 

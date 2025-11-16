@@ -9,6 +9,7 @@ fn test_data_file_to_avro_minimal() {
         .with_file_format("PARQUET")
         .with_record_count(100)
         .with_file_size_in_bytes(5000)
+        .with_partition(HashMap::new())
         .build()
         .unwrap();
 
@@ -27,6 +28,10 @@ fn test_data_file_to_avro_minimal() {
 fn test_data_file_to_avro_with_stats() {
     let mut value_counts = HashMap::new();
     value_counts.insert(1, 100);
+    let mut lower = HashMap::new();
+    lower.insert(1, vec![0, 0, 0, 0, 0, 0, 0, 1]);
+    let mut upper = HashMap::new();
+    upper.insert(1, vec![0, 0, 0, 0, 0, 0, 0, 2]);
 
     let data_file = DataFile::builder()
         .with_file_path("s3://bucket/data/file2.parquet")
@@ -34,11 +39,19 @@ fn test_data_file_to_avro_with_stats() {
         .with_record_count(200)
         .with_file_size_in_bytes(10000)
         .with_value_counts(value_counts)
+        .with_lower_bounds(lower.clone())
+        .with_upper_bounds(upper.clone())
+        .with_partition(HashMap::new())
         .build()
         .unwrap();
 
     let avro_value = data_file_to_avro(&data_file).unwrap();
 
     // Verify it's a Record with stats
-    assert!(matches!(avro_value, apache_avro::types::Value::Record(_)));
+    if let apache_avro::types::Value::Record(fields) = avro_value {
+        let lower_bounds = fields.iter().find(|(k, _)| k == "lower_bounds");
+        assert!(lower_bounds.is_some());
+    } else {
+        panic!("Expected Record value");
+    }
 }

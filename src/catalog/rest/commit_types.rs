@@ -14,6 +14,9 @@ pub struct CommitTableRequest {
 #[serde(tag = "type", rename_all = "kebab-case")]
 #[allow(clippy::enum_variant_names)]
 pub enum TableRequirement {
+    #[serde(rename = "assert-table-uuid")]
+    AssertTableUuid { uuid: String },
+
     #[serde(rename = "assert-current-schema-id")]
     AssertCurrentSchemaId {
         #[serde(rename = "current-schema-id")]
@@ -39,6 +42,13 @@ pub enum TableRequirement {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "kebab-case")]
 pub enum TableUpdate {
+    #[serde(rename = "set-current-table-metadata")]
+    SetCurrentTableMetadata {
+        #[serde(rename = "metadata-location")]
+        metadata_location: String,
+        metadata: Box<crate::spec::TableMetadata>,
+    },
+
     #[serde(rename = "add-snapshot")]
     AddSnapshot { snapshot: crate::spec::Snapshot },
 
@@ -84,26 +94,55 @@ pub struct CommitTableResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::spec::{NestedField, PrimitiveType, Schema, TableMetadata, Type};
 
     #[test]
     fn test_commit_types_serialize() {
+        let schema = Schema::builder()
+            .with_fields(vec![NestedField::required_field(
+                1,
+                "id".to_string(),
+                Type::Primitive(PrimitiveType::Long),
+            )])
+            .build()
+            .unwrap();
+
+        let metadata = TableMetadata::builder()
+            .with_location("s3://bucket/table")
+            .with_current_schema(schema)
+            .build()
+            .unwrap();
+
         let req = CommitTableRequest {
-            requirements: vec![TableRequirement::AssertRefSnapshotId {
-                r#ref: "main".to_string(),
-                snapshot_id: Some(1),
-            }],
-            updates: vec![TableUpdate::SetSnapshotRef {
-                ref_name: "main".to_string(),
-                snapshot_id: 2,
-                ref_type: "branch".to_string(),
-                min_snapshots_to_keep: None,
-                max_snapshot_age_ms: None,
-                max_ref_age_ms: None,
-            }],
+            requirements: vec![
+                TableRequirement::AssertTableUuid {
+                    uuid: metadata.table_uuid().to_string(),
+                },
+                TableRequirement::AssertRefSnapshotId {
+                    r#ref: "main".to_string(),
+                    snapshot_id: Some(1),
+                },
+            ],
+            updates: vec![
+                TableUpdate::SetCurrentTableMetadata {
+                    metadata_location: "s3://bucket/table/metadata/v1.metadata.json".to_string(),
+                    metadata: Box::new(metadata.clone()),
+                },
+                TableUpdate::SetSnapshotRef {
+                    ref_name: "main".to_string(),
+                    snapshot_id: 2,
+                    ref_type: "branch".to_string(),
+                    min_snapshots_to_keep: None,
+                    max_snapshot_age_ms: None,
+                    max_ref_age_ms: None,
+                },
+            ],
         };
 
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("assert-ref-snapshot-id"));
+        assert!(json.contains("assert-table-uuid"));
         assert!(json.contains("set-snapshot-ref"));
+        assert!(json.contains("set-current-table-metadata"));
     }
 }

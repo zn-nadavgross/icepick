@@ -10,6 +10,8 @@ pub fn from_catalog_error(e: CatalogError) -> Error {
         CatalogError::InvalidRequest(msg) => Error::invalid_input(msg),
         CatalogError::AuthError(msg) => Error::unauthorized(msg),
         CatalogError::HttpError(msg) => Error::io_error(msg),
+        CatalogError::ServerError { status, message } => Error::server_error(status, message),
+        CatalogError::Network(err) => Error::NetworkError { source: err },
         #[cfg(not(target_family = "wasm"))]
         CatalogError::InvalidArn(msg) => Error::invalid_input(msg),
         CatalogError::Unexpected(msg) => Error::unexpected(msg),

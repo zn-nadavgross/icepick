@@ -29,9 +29,9 @@ impl ParquetWriter {
             .map_err(|e| Error::invalid_input(format!("Failed to create Parquet writer: {}", e)))?;
 
         Ok(Self {
+            stats_collector: StatsCollector::new(&schema),
             schema,
             parquet_writer,
-            stats_collector: StatsCollector::new(),
         })
     }
 
@@ -72,8 +72,11 @@ impl ParquetWriter {
             .with_file_format("PARQUET")
             .with_record_count(stats.record_count)
             .with_file_size_in_bytes(file_size)
+            .with_column_sizes(stats.column_sizes)
             .with_value_counts(stats.value_counts)
             .with_null_value_counts(stats.null_value_counts)
+            .with_lower_bounds(stats.lower_bounds)
+            .with_upper_bounds(stats.upper_bounds)
             .build()
     }
 }

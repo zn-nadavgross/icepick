@@ -98,6 +98,27 @@ pub struct ListType {
     element_type: Box<Type>,
 }
 
+impl ListType {
+    /// Construct a new list type
+    pub fn new(element_id: i32, element_required: bool, element_type: Type) -> Self {
+        Self {
+            element_id,
+            element_required,
+            element_type: Box::new(element_type),
+        }
+    }
+
+    /// Get the element type
+    pub fn element_type(&self) -> &Type {
+        &self.element_type
+    }
+
+    /// Whether the element is required
+    pub fn element_required(&self) -> bool {
+        self.element_required
+    }
+}
+
 /// Placeholder for map type
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MapType {
@@ -106,6 +127,40 @@ pub struct MapType {
     value_id: i32,
     value_required: bool,
     value_type: Box<Type>,
+}
+
+impl MapType {
+    /// Construct a new map type
+    pub fn new(
+        key_id: i32,
+        key_type: Type,
+        value_id: i32,
+        value_required: bool,
+        value_type: Type,
+    ) -> Self {
+        Self {
+            key_id,
+            key_type: Box::new(key_type),
+            value_id,
+            value_required,
+            value_type: Box::new(value_type),
+        }
+    }
+
+    /// Get the key type
+    pub fn key_type(&self) -> &Type {
+        &self.key_type
+    }
+
+    /// Get the value type
+    pub fn value_type(&self) -> &Type {
+        &self.value_type
+    }
+
+    /// Whether the value is required
+    pub fn value_required(&self) -> bool {
+        self.value_required
+    }
 }
 
 /// A field in a struct type

@@ -4,12 +4,14 @@
 //! Copyright 2024 Apache Software Foundation
 //! Licensed under Apache License 2.0
 
+pub mod data_file;
 pub mod identifier;
 pub mod metadata;
 pub mod schema;
 pub mod snapshot;
 pub mod types;
 
+pub use data_file::{DataContentType, DataFile};
 pub use identifier::{NamespaceIdent, TableIdent};
 pub use metadata::TableMetadata;
 pub use schema::Schema;

@@ -1,4 +1,5 @@
 use crate::s3tables::error::{Result, S3TablesError};
+use iceberg::spec::{Schema, TableMetadata};
 use reqsign::{Context, OsEnv, Signer};
 use reqsign_aws_v4::{Credential, DefaultCredentialProvider, RequestSigner};
 use reqsign_file_read_tokio::TokioFileRead;
@@ -51,6 +52,25 @@ struct CreateNamespaceRequest {
 struct CreateNamespaceResponse {
     namespace: Vec<String>,
     properties: HashMap<String, String>,
+}
+
+#[derive(Serialize)]
+struct CreateTableRequest {
+    name: String,
+    schema: Schema,
+    location: Option<String>,
+    #[serde(rename = "partition-spec")]
+    partition_spec: serde_json::Value,
+    #[serde(rename = "write-order")]
+    write_order: serde_json::Value,
+    properties: HashMap<String, String>,
+}
+
+#[derive(Deserialize)]
+struct CreateTableResponse {
+    metadata: TableMetadata,
+    #[serde(rename = "metadata-location")]
+    metadata_location: String,
 }
 
 pub struct S3TablesClient {
@@ -116,6 +136,45 @@ impl S3TablesClient {
 
         // Namespace created successfully
         Ok(())
+    }
+
+    pub async fn create_table(
+        &self,
+        namespace: &str,
+        table_name: &str,
+        schema: Schema,
+    ) -> Result<TableMetadata> {
+        let url = format!("{}/v1/namespaces/{}/tables", self.endpoint, namespace);
+
+        let body = CreateTableRequest {
+            name: table_name.to_string(),
+            schema,
+            location: None,  // S3 Tables auto-assigns
+            partition_spec: serde_json::json!({
+                "spec-id": 0,
+                "fields": []
+            }),
+            write_order: serde_json::json!({
+                "order-id": 0,
+                "fields": []
+            }),
+            properties: HashMap::new(),
+        };
+
+        let req = self.http_client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .build()
+            .map_err(|e| S3TablesError::HttpError(format!("Failed to build request: {}", e)))?;
+
+        let response = self.send_signed_request(req).await?;
+        let json_value = self.handle_response(response).await?;
+
+        let table_response: CreateTableResponse = serde_json::from_value(json_value)
+            .map_err(|e| S3TablesError::Unexpected(format!("Failed to parse table response: {}", e)))?;
+
+        Ok(table_response.metadata)
     }
 
     async fn send_signed_request(&self, req: reqwest::Request) -> Result<Response> {

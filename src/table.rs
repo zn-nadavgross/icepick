@@ -1,7 +1,7 @@
 //! Iceberg table representation
 
 use crate::io::FileIO;
-use crate::spec::{Schema, TableIdent, TableMetadata};
+use crate::spec::{Schema, Snapshot, TableIdent, TableMetadata};
 use crate::transaction::Transaction;
 
 /// An Iceberg table with integrated storage
@@ -54,10 +54,14 @@ impl Table {
         &self.metadata_location
     }
 
-    /// Get the FileIO (for internal use)
-    #[allow(dead_code)]
-    pub(crate) fn file_io(&self) -> &FileIO {
+    /// Get the FileIO
+    pub fn file_io(&self) -> &FileIO {
         &self.file_io
+    }
+
+    /// Get current snapshot
+    pub fn current_snapshot(&self) -> Option<&Snapshot> {
+        self.metadata.current_snapshot()
     }
 
     /// Start a new transaction for writing data

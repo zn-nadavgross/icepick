@@ -7,6 +7,34 @@ use crate::spec::{Snapshot, Summary};
 use crate::transaction::{Transaction, TransactionOperation};
 use uuid::Uuid;
 
+/// Generate a unique snapshot ID using UUID-based approach (like iceberg-rust)
+/// Returns a positive i64 that's unique within the table
+fn generate_snapshot_id(table: &crate::table::Table) -> i64 {
+    let generate_random_id = || -> i64 {
+        let (lhs, rhs) = Uuid::new_v4().as_u64_pair();
+        let snapshot_id = (lhs ^ rhs) as i64;
+        if snapshot_id < 0 {
+            -snapshot_id
+        } else {
+            snapshot_id
+        }
+    };
+
+    let mut snapshot_id = generate_random_id();
+
+    // Ensure uniqueness by checking against existing snapshots
+    while table
+        .metadata()
+        .snapshots()
+        .iter()
+        .any(|s| s.snapshot_id() == snapshot_id)
+    {
+        snapshot_id = generate_random_id();
+    }
+
+    snapshot_id
+}
+
 /// Try to commit once (no retries)
 pub async fn try_commit(
     transaction: &Transaction<'_>,
@@ -17,8 +45,25 @@ pub async fn try_commit(
     let file_io = table.file_io();
 
     // Generate IDs
-    let snapshot_id = metadata.current_snapshot_id().map(|id| id + 1).unwrap_or(1);
-    let sequence_number = snapshot_id;
+    let snapshot_id = generate_snapshot_id(table);
+    // Sequence number should be based on last_sequence_number from metadata
+    // For now, we'll compute it: if there are snapshots, max sequence + 1, otherwise 1
+    let sequence_number = if metadata.snapshots().is_empty() {
+        1 // First snapshot gets sequence number 1
+    } else {
+        // Find max sequence number from existing snapshots and add 1
+        metadata
+            .snapshots()
+            .iter()
+            .filter_map(|s| s.sequence_number())
+            .max()
+            .map(|max| max + 1)
+            .unwrap_or(1)
+    };
+    eprintln!(
+        "DEBUG: Generated snapshot_id: {}, sequence_number: {}",
+        snapshot_id, sequence_number
+    );
     let commit_uuid = Uuid::new_v4().to_string().replace('-', "");
 
     // Extract data files from operations
@@ -69,16 +114,30 @@ pub async fn try_commit(
         .set("total-records", &added_rows_count.to_string())
         .build();
 
-    let parent_id = metadata.current_snapshot_id().unwrap_or(0);
-    eprintln!("DEBUG: Building snapshot with parent_id: {}", parent_id);
+    // Handle parent snapshot ID: -1 means no parent (first snapshot)
+    let current_snap_id = metadata.current_snapshot_id();
+    eprintln!(
+        "DEBUG: Current snapshot ID from metadata: {:?}",
+        current_snap_id
+    );
     eprintln!(
         "DEBUG: Building snapshot with schema_id: {}",
         metadata.current_schema().schema_id()
     );
 
-    let snapshot = Snapshot::builder()
-        .with_snapshot_id(snapshot_id)
-        .with_parent_snapshot_id(parent_id)
+    let mut snapshot_builder = Snapshot::builder().with_snapshot_id(snapshot_id);
+
+    // Only set parent if there is a valid parent (not -1)
+    if let Some(parent_id) = current_snap_id {
+        if parent_id != -1 {
+            eprintln!("DEBUG: Setting parent_snapshot_id: {}", parent_id);
+            snapshot_builder = snapshot_builder.with_parent_snapshot_id(parent_id);
+        } else {
+            eprintln!("DEBUG: No parent snapshot (current_snapshot_id = -1)");
+        }
+    }
+
+    let snapshot = snapshot_builder
         .with_sequence_number(sequence_number)
         .with_timestamp_ms(
             std::time::SystemTime::now()

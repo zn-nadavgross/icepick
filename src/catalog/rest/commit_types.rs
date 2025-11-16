@@ -26,8 +26,10 @@ pub enum TableRequirement {
         last_assigned_field_id: i32,
     },
 
-    #[serde(rename = "assert-current-snapshot-id")]
-    AssertCurrentSnapshotId {
+    #[serde(rename = "assert-ref-snapshot-id")]
+    AssertRefSnapshotId {
+        #[serde(rename = "ref")]
+        r#ref: String,
         #[serde(rename = "snapshot-id")]
         snapshot_id: Option<i64>,
     },
@@ -48,6 +50,19 @@ pub enum TableUpdate {
         snapshot_id: i64,
         #[serde(rename = "type")]
         ref_type: String,
+        /// Optional retention policy fields for branches
+        #[serde(
+            rename = "min-snapshots-to-keep",
+            skip_serializing_if = "Option::is_none"
+        )]
+        min_snapshots_to_keep: Option<i32>,
+        #[serde(
+            rename = "max-snapshot-age-ms",
+            skip_serializing_if = "Option::is_none"
+        )]
+        max_snapshot_age_ms: Option<i64>,
+        #[serde(rename = "max-ref-age-ms", skip_serializing_if = "Option::is_none")]
+        max_ref_age_ms: Option<i64>,
     },
 
     #[serde(rename = "upgrade-format-version")]
@@ -73,18 +88,22 @@ mod tests {
     #[test]
     fn test_commit_types_serialize() {
         let req = CommitTableRequest {
-            requirements: vec![TableRequirement::AssertCurrentSnapshotId {
+            requirements: vec![TableRequirement::AssertRefSnapshotId {
+                r#ref: "main".to_string(),
                 snapshot_id: Some(1),
             }],
             updates: vec![TableUpdate::SetSnapshotRef {
                 ref_name: "main".to_string(),
                 snapshot_id: 2,
                 ref_type: "branch".to_string(),
+                min_snapshots_to_keep: None,
+                max_snapshot_age_ms: None,
+                max_ref_age_ms: None,
             }],
         };
 
         let json = serde_json::to_string(&req).unwrap();
-        assert!(json.contains("assert-current-snapshot-id"));
+        assert!(json.contains("assert-ref-snapshot-id"));
         assert!(json.contains("set-snapshot-ref"));
     }
 }

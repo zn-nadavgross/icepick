@@ -187,6 +187,25 @@ impl IcebergRestCatalog {
         ))
     }
 
+    /// Helper function to read and optionally decompress metadata files
+    fn read_metadata_bytes(path: &str, bytes: Vec<u8>) -> crate::error::Result<Vec<u8>> {
+        // Check if the file is gzipped (R2 uses .gz.metadata.json)
+        if path.ends_with(".gz.metadata.json") || path.ends_with(".metadata.json.gz") {
+            use std::io::Read;
+            let mut decoder = flate2::read::GzDecoder::new(&bytes[..]);
+            let mut decompressed = Vec::new();
+            decoder.read_to_end(&mut decompressed).map_err(|e| {
+                crate::error::Error::io_error(format!(
+                    "Failed to decompress gzipped metadata: {}",
+                    e
+                ))
+            })?;
+            Ok(decompressed)
+        } else {
+            Ok(bytes)
+        }
+    }
+
     async fn update_table_metadata_impl(
         &self,
         identifier: &crate::spec::TableIdent,
@@ -201,6 +220,9 @@ impl IcebergRestCatalog {
                 .map_err(|e| {
                     crate::error::Error::io_error(format!("Failed to read old metadata: {}", e))
                 })?;
+
+        let current_metadata_bytes =
+            Self::read_metadata_bytes(old_metadata_location, current_metadata_bytes)?;
 
         let current_metadata: crate::spec::TableMetadata =
             serde_json::from_slice(&current_metadata_bytes).map_err(|e| {
@@ -219,6 +241,9 @@ impl IcebergRestCatalog {
             .map_err(|e| {
                 crate::error::Error::io_error(format!("Failed to read new metadata: {}", e))
             })?;
+
+        let new_metadata_bytes =
+            Self::read_metadata_bytes(new_metadata_location, new_metadata_bytes)?;
 
         let new_metadata: crate::spec::TableMetadata = serde_json::from_slice(&new_metadata_bytes)
             .map_err(|e| {
@@ -243,9 +268,17 @@ impl IcebergRestCatalog {
         eprintln!("  schema_id: {:?}", new_snapshot.schema_id());
 
         // 3. Build commit request with both AddSnapshot and SetSnapshotRef updates
+        // Note: -1 means "no snapshot", which should be represented as null in REST API
+        // Use assert-ref-snapshot-id with the "main" branch reference
+        let snapshot_id_requirement = if current_snapshot_id == Some(-1) {
+            None
+        } else {
+            current_snapshot_id
+        };
         let request = CommitTableRequest {
-            requirements: vec![TableRequirement::AssertCurrentSnapshotId {
-                snapshot_id: current_snapshot_id,
+            requirements: vec![TableRequirement::AssertRefSnapshotId {
+                r#ref: "main".to_string(),
+                snapshot_id: snapshot_id_requirement,
             }],
             updates: vec![
                 // First, add the new snapshot to the table
@@ -257,6 +290,9 @@ impl IcebergRestCatalog {
                     ref_name: "main".to_string(),
                     snapshot_id: new_snapshot_id,
                     ref_type: "branch".to_string(),
+                    min_snapshots_to_keep: None,
+                    max_snapshot_age_ms: None,
+                    max_ref_age_ms: None,
                 },
             ],
         };

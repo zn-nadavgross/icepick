@@ -138,6 +138,16 @@ impl Error {
             message: message.into(),
         }
     }
+
+    /// Create an InvalidInput error
+    pub fn invalid_input(message: impl Into<String>) -> Self {
+        Self::InvalidInput(message.into())
+    }
+
+    /// Create an IoError
+    pub fn io_error(message: impl Into<String>) -> Self {
+        Self::IoError(message.into())
+    }
 }
 
 // Conversion to iceberg::Error for compatibility with iceberg::Catalog trait

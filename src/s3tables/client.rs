@@ -1,5 +1,6 @@
 use crate::s3tables::error::{Result, S3TablesError};
 use iceberg::spec::{Schema, TableMetadata};
+use iceberg::{TableRequirement, TableUpdate};
 use reqsign::{Context, OsEnv, Signer};
 use reqsign_aws_v4::{Credential, DefaultCredentialProvider, RequestSigner};
 use reqsign_file_read_tokio::TokioFileRead;
@@ -75,6 +76,15 @@ struct CreateTableResponse {
 
 // LoadTableResponse has same structure as CreateTableResponse
 type LoadTableResponse = CreateTableResponse;
+
+#[derive(Serialize)]
+struct UpdateTableRequest {
+    requirements: Vec<TableRequirement>,
+    updates: Vec<TableUpdate>,
+}
+
+// UpdateTableResponse has same structure as CreateTableResponse
+type UpdateTableResponse = CreateTableResponse;
 
 pub struct S3TablesClient {
     endpoint: String,
@@ -200,6 +210,39 @@ impl S3TablesClient {
         let json_value = self.handle_response(response).await?;
 
         let table_response: LoadTableResponse = serde_json::from_value(json_value)
+            .map_err(|e| S3TablesError::Unexpected(format!("Failed to parse table response: {}", e)))?;
+
+        Ok(table_response.metadata)
+    }
+
+    pub async fn update_table(
+        &self,
+        namespace: &str,
+        table_name: &str,
+        requirements: Vec<TableRequirement>,
+        updates: Vec<TableUpdate>,
+    ) -> Result<TableMetadata> {
+        let url = format!(
+            "{}/v1/namespaces/{}/tables/{}",
+            self.endpoint, namespace, table_name
+        );
+
+        let body = UpdateTableRequest {
+            requirements,
+            updates,
+        };
+
+        let req = self.http_client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .build()
+            .map_err(|e| S3TablesError::HttpError(format!("Failed to build request: {}", e)))?;
+
+        let response = self.send_signed_request(req).await?;
+        let json_value = self.handle_response(response).await?;
+
+        let table_response: UpdateTableResponse = serde_json::from_value(json_value)
             .map_err(|e| S3TablesError::Unexpected(format!("Failed to parse table response: {}", e)))?;
 
         Ok(table_response.metadata)

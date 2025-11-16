@@ -115,3 +115,93 @@ async fn test_end_to_end_commit_with_stats() {
         Some(&"1000".to_string())
     );
 }
+
+#[tokio::test]
+async fn test_multiple_sequential_commits() {
+    let op = Operator::via_iter(opendal::Scheme::Memory, []).unwrap();
+    let file_io = FileIO::new(op.clone());
+
+    let schema = Schema::builder()
+        .with_fields(vec![NestedField::required_field(
+            1,
+            "id".to_string(),
+            Type::Primitive(PrimitiveType::Long),
+        )])
+        .build()
+        .unwrap();
+
+    let metadata = TableMetadata::builder()
+        .with_location("memory://warehouse/test/multi")
+        .with_current_schema(schema)
+        .build()
+        .unwrap();
+
+    let ident = TableIdent::new(
+        NamespaceIdent::new(vec!["test".to_string()]),
+        "multi".to_string(),
+    );
+
+    let mut table = Table::new(
+        ident.clone(),
+        metadata,
+        "memory://warehouse/test/multi/metadata/v0.metadata.json".to_string(),
+        file_io.clone(),
+    );
+
+    // First commit
+    let data_file1 = DataFile::builder()
+        .with_file_path("memory://warehouse/test/multi/data/file1.parquet")
+        .with_file_format("PARQUET")
+        .with_record_count(100)
+        .with_file_size_in_bytes(5000)
+        .build()
+        .unwrap();
+
+    table
+        .transaction()
+        .append(vec![data_file1])
+        .commit()
+        .await
+        .unwrap();
+
+    // Read updated metadata for second commit
+    let metadata_bytes = op
+        .read("memory://warehouse/test/multi/metadata/v1.metadata.json")
+        .await
+        .unwrap();
+    let updated_metadata: TableMetadata = serde_json::from_slice(&metadata_bytes.to_vec()).unwrap();
+
+    table = Table::new(
+        ident,
+        updated_metadata,
+        "memory://warehouse/test/multi/metadata/v1.metadata.json".to_string(),
+        file_io.clone(),
+    );
+
+    // Second commit
+    let data_file2 = DataFile::builder()
+        .with_file_path("memory://warehouse/test/multi/data/file2.parquet")
+        .with_file_format("PARQUET")
+        .with_record_count(200)
+        .with_file_size_in_bytes(10000)
+        .build()
+        .unwrap();
+
+    table
+        .transaction()
+        .append(vec![data_file2])
+        .commit()
+        .await
+        .unwrap();
+
+    // Verify
+    let final_metadata_bytes = op
+        .read("memory://warehouse/test/multi/metadata/v2.metadata.json")
+        .await
+        .unwrap();
+    let final_metadata: TableMetadata =
+        serde_json::from_slice(&final_metadata_bytes.to_vec()).unwrap();
+
+    assert_eq!(final_metadata.current_snapshot_id(), Some(2));
+    assert_eq!(final_metadata.snapshots().len(), 2);
+}

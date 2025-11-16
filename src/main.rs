@@ -144,8 +144,14 @@ async fn main() -> Result<()> {
     // Set up location and file name generators
     let location_generator = DefaultLocationGenerator::new(table.metadata().clone())
         .context("Failed to create location generator")?;
-    let file_name_generator =
-        DefaultFileNameGenerator::new("data".to_string(), None, DataFileFormat::Parquet);
+
+    // Use UUID suffix to ensure unique file names on each run
+    let unique_suffix = uuid::Uuid::new_v4().to_string();
+    let file_name_generator = DefaultFileNameGenerator::new(
+        "data".to_string(),
+        Some(unique_suffix),
+        DataFileFormat::Parquet,
+    );
 
     // Create Parquet writer builder
     let parquet_writer_builder = ParquetWriterBuilder::new(

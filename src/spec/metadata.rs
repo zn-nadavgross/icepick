@@ -76,6 +76,11 @@ impl TableMetadata {
         &self.snapshots
     }
 
+    /// Get current snapshot ID
+    pub fn current_snapshot_id(&self) -> Option<i64> {
+        self.current_snapshot_id
+    }
+
     /// Get current snapshot
     pub fn current_snapshot(&self) -> Option<&Snapshot> {
         self.current_snapshot_id
@@ -182,5 +187,31 @@ impl TableMetadataBuilder {
             current_snapshot_id: self.current_snapshot_id,
             properties: self.properties,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::spec::{NestedField, PrimitiveType, Type};
+
+    #[test]
+    fn test_current_snapshot_id() {
+        let schema = Schema::builder()
+            .with_fields(vec![NestedField::required_field(
+                1,
+                "id".to_string(),
+                Type::Primitive(PrimitiveType::Long),
+            )])
+            .build()
+            .unwrap();
+
+        let metadata = TableMetadata::builder()
+            .with_location("s3://test/table")
+            .with_current_schema(schema)
+            .build()
+            .unwrap();
+
+        assert_eq!(metadata.current_snapshot_id(), None);
     }
 }

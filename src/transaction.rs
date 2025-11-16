@@ -47,4 +47,9 @@ impl<'a> Transaction<'a> {
     pub(crate) fn operations(&self) -> &[TransactionOperation] {
         &self.operations
     }
+
+    /// Commit the transaction, writing snapshots to the catalog
+    pub async fn commit(self) -> crate::error::Result<()> {
+        todo!("Implement commit")
+    }
 }

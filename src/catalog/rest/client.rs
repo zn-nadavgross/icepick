@@ -156,19 +156,19 @@ impl IcebergRestCatalog {
         let auth = Box::new(crate::catalog::SigV4AuthProvider::new(
             region.clone(),
             "s3tables".to_string(),
-            credentials,
+            credentials.clone(),
         ));
 
         let http_client = Client::new();
 
-        // Create FileIO for S3 access using opendal
-        let s3_config = vec![("region".to_string(), region)];
-
-        let operator =
-            opendal::Operator::via_iter(opendal::Scheme::S3, s3_config).map_err(|e| {
-                CatalogError::Unexpected(format!("Failed to create S3 operator: {}", e))
-            })?;
-        let file_io = FileIO::new(operator);
+        // Create FileIO with AWS credentials for multi-bucket support
+        // S3 Tables stores data in AWS-managed buckets that may be in different regions
+        let file_io_credentials = crate::io::AwsCredentials {
+            access_key_id: credentials.access_key_id().to_string(),
+            secret_access_key: credentials.secret_access_key().to_string(),
+            session_token: credentials.session_token().map(|s| s.to_string()),
+        };
+        let file_io = FileIO::from_aws_credentials(file_io_credentials, region.clone());
 
         Ok(Self {
             endpoint,

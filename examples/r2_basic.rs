@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
 use icepick::catalog::Catalog;
-use icepick::spec::{NamespaceIdent, NestedField, PrimitiveType, Schema, TableCreation, Type};
+use icepick::spec::{
+    NamespaceIdent, NestedField, PrimitiveType, Schema, TableCreation, TableIdent, Type,
+};
 use icepick::writer::ParquetWriter;
 use icepick::R2Catalog;
 
@@ -26,12 +28,11 @@ async fn create_r2_catalog_from_env() -> Result<R2Catalog> {
 /// Build simple schema: { id: i64 }
 fn build_schema() -> Result<Schema> {
     let schema = Schema::builder()
-        .with_fields(vec![NestedField::required(
+        .with_fields(vec![NestedField::required_field(
             1,
-            "id",
+            "id".to_string(),
             Type::Primitive(PrimitiveType::Long),
-        )
-        .into()])
+        )])
         .build()
         .context("Failed to build schema")?;
 
@@ -39,7 +40,6 @@ fn build_schema() -> Result<Schema> {
 }
 
 use arrow::array::Int64Array;
-use arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
 use arrow::record_batch::RecordBatch;
 use icepick::arrow_convert::schema_to_arrow;
 use std::sync::Arc;
@@ -57,14 +57,6 @@ fn create_sample_data(iceberg_schema: &Schema) -> Result<RecordBatch> {
         .context("Failed to create record batch")?;
 
     Ok(batch)
-}
-
-use arrow::util::pretty::print_batches;
-
-/// Print Arrow RecordBatch in pretty table format
-fn print_batch(batch: &RecordBatch) -> Result<()> {
-    print_batches(std::slice::from_ref(batch)).context("Failed to print batch")?;
-    Ok(())
 }
 
 #[tokio::main]
@@ -92,7 +84,7 @@ async fn main() -> Result<()> {
 
     println!("✓ Connected to R2 Data Catalog");
 
-    let namespace = NamespaceIdent::new(namespace_name.clone());
+    let namespace = NamespaceIdent::new(vec![namespace_name.clone()]);
 
     // Cloudflare R2 requires explicit namespace creation
     // Try to create the namespace
@@ -114,7 +106,7 @@ async fn main() -> Result<()> {
     let schema = build_schema()?;
 
     // Try to load the table first, create if it doesn't exist
-    let table_ident = iceberg::TableIdent::new(namespace.clone(), table_name.clone());
+    let table_ident = TableIdent::new(namespace.clone(), table_name.clone());
 
     println!(
         "Attempting to load table: {}.{}",
@@ -128,9 +120,10 @@ async fn main() -> Result<()> {
         Err(load_err) => {
             println!("Table not found, attempting to create: {}", load_err);
             let table_creation = TableCreation::builder()
-                .name(table_name.clone())
-                .schema(schema.clone())
-                .build();
+                .with_name(table_name.clone())
+                .with_schema(schema.clone())
+                .build()
+                .context("Failed to build table creation")?;
 
             let table = catalog
                 .create_table(&namespace, table_creation)
@@ -147,91 +140,37 @@ async fn main() -> Result<()> {
 
     let batch = create_sample_data(&schema)?;
 
-    // Set up location and file name generators
-    let location_generator = DefaultLocationGenerator::new(table.metadata().clone())
-        .context("Failed to create location generator")?;
+    // Create simple icepick ParquetWriter
+    let mut writer = ParquetWriter::new(table.metadata().current_schema().clone())
+        .context("Failed to create Parquet writer")?;
 
-    // Use UUID suffix to ensure unique file names on each run
-    let unique_suffix = uuid::Uuid::new_v4().to_string();
-    let file_name_generator = DefaultFileNameGenerator::new(
-        "data".to_string(),
-        Some(unique_suffix),
-        DataFileFormat::Parquet,
+    writer
+        .write_batch(&batch)
+        .context("Failed to write batch")?;
+
+    let file_path = format!(
+        "{}/data/file-{}.parquet",
+        table.location(),
+        uuid::Uuid::new_v4()
     );
 
-    // Create Parquet writer builder
-    let parquet_writer_builder = ParquetWriterBuilder::new(
-        WriterProperties::default(),
-        table.metadata().current_schema().clone(),
-        None,
-        table.file_io().clone(),
-        location_generator.clone(),
-        file_name_generator.clone(),
-    );
-
-    // Create data file writer
-    let data_file_writer_builder = DataFileWriterBuilder::new(parquet_writer_builder, None, 0);
-    let mut data_file_writer = data_file_writer_builder
-        .build()
+    let data_file = writer
+        .finish(table.file_io(), file_path.clone())
         .await
-        .context("Failed to create data file writer")?;
+        .context("Failed to finish writing Parquet file")?;
 
-    // Write data
-    data_file_writer
-        .write(batch.clone())
-        .await
-        .context("Failed to write data")?;
+    println!("✓ Wrote {} rows to {}", batch.num_rows(), file_path);
 
-    // Close writer and retrieve data files
-    let data_files = data_file_writer
-        .close()
-        .await
-        .context("Failed to close writer")?;
-
-    println!(
-        "✓ Wrote {} rows to {} data files",
-        batch.num_rows(),
-        data_files.len()
-    );
-
-    // Commit data files to table via transaction
-    let tx = Transaction::new(&table);
-    let action = tx.fast_append().add_data_files(data_files);
-    let tx = action
-        .apply(tx)
-        .context("Failed to apply transaction action")?;
-    let table = tx
-        .commit(&catalog)
+    // Commit using icepick transaction
+    table
+        .transaction()
+        .append(vec![data_file])
+        .commit()
         .await
         .context("Failed to commit transaction")?;
 
     println!("✓ Committed snapshot to table");
-
-    let scan = table
-        .scan()
-        .build()
-        .context("Failed to create table scan")?;
-
-    let mut stream = scan
-        .to_arrow()
-        .await
-        .context("Failed to create arrow stream")?;
-
-    let mut read_batches = Vec::new();
-    while let Some(batch_result) = stream.next().await {
-        let read_batch = batch_result.context("Failed to read batch")?;
-        read_batches.push(read_batch);
-    }
-
-    println!("✓ Read {} batches", read_batches.len());
-
-    println!("\nWritten data:");
-    print_batch(&batch)?;
-
-    println!("\nRead data:");
-    for read_batch in &read_batches {
-        print_batch(read_batch)?;
-    }
+    println!("\nNote: Reading data back is not yet supported in icepick");
 
     Ok(())
 }

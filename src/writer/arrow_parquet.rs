@@ -13,6 +13,12 @@ use parquet::file::properties::WriterProperties;
 use std::future::Future;
 use std::pin::Pin;
 
+#[cfg(not(target_arch = "wasm32"))]
+type BuilderFuture<'a> = Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>;
+
+#[cfg(target_arch = "wasm32")]
+type BuilderFuture<'a> = Pin<Box<dyn Future<Output = Result<()>> + 'a>>;
+
 /// Builder for writing Arrow RecordBatch to Parquet on S3
 ///
 /// Created by the `arrow_to_parquet()` function. Use the builder pattern to configure
@@ -104,7 +110,7 @@ impl<'a> ArrowParquetBuilder<'a> {
 /// Implement IntoFuture to allow direct .await on the builder
 impl<'a> std::future::IntoFuture for ArrowParquetBuilder<'a> {
     type Output = Result<()>;
-    type IntoFuture = Pin<Box<dyn Future<Output = Self::Output> + Send + 'a>>;
+    type IntoFuture = BuilderFuture<'a>;
 
     fn into_future(self) -> Self::IntoFuture {
         Box::pin(self.finish())

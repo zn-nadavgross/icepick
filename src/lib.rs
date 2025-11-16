@@ -47,6 +47,7 @@
 
 pub mod catalog;
 pub mod error;
+pub mod io;
 pub mod spec;
 
 // Re-export common types

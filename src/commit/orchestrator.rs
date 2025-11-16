@@ -97,7 +97,24 @@ pub async fn try_commit(transaction: &Transaction<'_>) -> Result<()> {
 
 /// Commit a transaction with automatic retry on concurrent modification
 pub async fn commit_transaction(transaction: Transaction<'_>) -> Result<()> {
-    // For now, just call try_commit directly
-    // Phase 8 will add retry logic with exponential backoff
-    try_commit(&transaction).await
+    const MAX_RETRIES: u32 = 3;
+
+    for attempt in 0..MAX_RETRIES {
+        match try_commit(&transaction).await {
+            Ok(()) => return Ok(()),
+            Err(Error::ConcurrentModification { .. }) => {
+                if attempt == MAX_RETRIES - 1 {
+                    return Err(Error::InvalidInput(format!(
+                        "Max retries ({}) exceeded for commit",
+                        MAX_RETRIES
+                    )));
+                }
+                // Retry immediately without sleep to avoid tokio dependency
+                // In production, the catalog's optimistic locking should handle concurrency
+            }
+            Err(e) => return Err(e),
+        }
+    }
+
+    unreachable!("Loop should always return within MAX_RETRIES iterations")
 }

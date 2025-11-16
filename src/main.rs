@@ -1,5 +1,6 @@
 use anyhow::{ensure, Context, Result};
 use futures::stream::StreamExt;
+use hello_world_iceberg::catalog::IcebergRestCatalog;
 use iceberg::spec::{DataFileFormat, NestedField, PrimitiveType, Schema, Type};
 use iceberg::transaction::{ApplyTransactionAction, Transaction};
 use iceberg::writer::base_writer::data_file_writer::DataFileWriterBuilder;
@@ -12,32 +13,9 @@ use iceberg::NamespaceIdent;
 use iceberg::{Catalog, TableCreation};
 use parquet::file::properties::WriterProperties;
 
-mod s3tables;
-use s3tables::S3TablesCatalog;
-
-/// Parse S3 Tables ARN and extract region and bucket name
-/// ARN format: arn:aws:s3tables:region:account:bucket/name
-fn parse_s3_tables_arn(arn: &str) -> Result<(String, String)> {
-    let parts: Vec<&str> = arn.split(':').collect();
-    ensure!(
-        parts.len() == 6,
-        "Invalid S3 Tables ARN format: expected 6 parts"
-    );
-    ensure!(parts[0] == "arn", "ARN must start with 'arn'");
-    ensure!(parts[2] == "s3tables", "Not an S3 Tables ARN");
-
-    let region = parts[3].to_string();
-    let bucket_name = parts[5]
-        .strip_prefix("bucket/")
-        .context("ARN must contain 'bucket/' prefix")?
-        .to_string();
-
-    Ok((region, bucket_name))
-}
-
 /// Create S3 Tables catalog with SigV4 authentication
-async fn create_s3_tables_catalog(arn: &str) -> Result<S3TablesCatalog> {
-    let catalog = S3TablesCatalog::from_arn("s3tables".to_string(), arn)
+async fn create_s3_tables_catalog(arn: &str) -> Result<IcebergRestCatalog> {
+    let catalog = IcebergRestCatalog::from_s3_tables_arn("s3tables".to_string(), arn)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to create S3 Tables catalog: {}", e))?;
 
@@ -99,8 +77,6 @@ async fn main() -> Result<()> {
     let arn = &args[1];
     let namespace_name = &args[2];
     let table_name = &args[3];
-
-    let (_region, _bucket) = parse_s3_tables_arn(arn)?;
 
     let catalog = create_s3_tables_catalog(arn)
         .await

@@ -63,6 +63,10 @@ pub enum Error {
     /// I/O error
     #[error("I/O error: {0}")]
     IoError(String),
+
+    /// Concurrent modification detected (optimistic locking failure)
+    #[error("Concurrent modification detected: {message}")]
+    ConcurrentModification { message: String },
 }
 
 impl Error {
@@ -127,6 +131,13 @@ impl Error {
             message: message.into(),
         }
     }
+
+    /// Create a ConcurrentModification error
+    pub fn concurrent_modification(message: impl Into<String>) -> Self {
+        Self::ConcurrentModification {
+            message: message.into(),
+        }
+    }
 }
 
 // Conversion to iceberg::Error for compatibility with iceberg::Catalog trait
@@ -172,6 +183,9 @@ impl From<Error> for iceberg::Error {
                 iceberg::Error::new(iceberg::ErrorKind::DataInvalid, message)
             }
             Error::IoError(message) => iceberg::Error::new(iceberg::ErrorKind::Unexpected, message),
+            Error::ConcurrentModification { message } => {
+                iceberg::Error::new(iceberg::ErrorKind::DataInvalid, message)
+            }
         }
     }
 }
@@ -203,5 +217,15 @@ mod tests {
 
         let err = Error::conflict("Resource already exists");
         assert_eq!(err.to_string(), "Conflict: Resource already exists");
+    }
+
+    #[test]
+    fn test_concurrent_modification_error() {
+        let err = Error::concurrent_modification("expected v2, found v3");
+        assert!(matches!(err, Error::ConcurrentModification { .. }));
+        assert_eq!(
+            err.to_string(),
+            "Concurrent modification detected: expected v2, found v3"
+        );
     }
 }

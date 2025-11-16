@@ -37,6 +37,9 @@ pub enum TableRequirement {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "kebab-case")]
 pub enum TableUpdate {
+    #[serde(rename = "add-snapshot")]
+    AddSnapshot { snapshot: crate::spec::Snapshot },
+
     #[serde(rename = "set-snapshot-ref")]
     SetSnapshotRef {
         #[serde(rename = "ref-name")]

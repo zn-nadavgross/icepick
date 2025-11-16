@@ -75,9 +75,22 @@ impl IcebergRestCatalog {
         let status = response.status();
 
         match status.as_u16() {
-            200..=299 => response.json().await.map_err(|e| {
-                CatalogError::HttpError(format!("Failed to parse JSON response: {}", e))
-            }),
+            200..=299 => {
+                // Debug: log the response body before parsing
+                let body_text = response.text().await.map_err(|e| {
+                    CatalogError::HttpError(format!("Failed to read response body: {}", e))
+                })?;
+                eprintln!("DEBUG: {} response body: {}", status, body_text);
+
+                // Handle empty responses (204 No Content or empty body)
+                if body_text.is_empty() || status.as_u16() == 204 {
+                    return Ok(serde_json::Value::Object(serde_json::Map::new()));
+                }
+
+                serde_json::from_str(&body_text).map_err(|e| {
+                    CatalogError::HttpError(format!("Failed to parse response: {}", e))
+                })
+            }
 
             403 => {
                 let body = response

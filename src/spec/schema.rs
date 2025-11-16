@@ -78,7 +78,7 @@ impl SchemaBuilder {
             .ok_or_else(|| Error::invalid_request("Schema must have fields"))?;
 
         Ok(Schema {
-            schema_id: self.schema_id.unwrap_or(0),
+            schema_id: self.schema_id.unwrap_or(1), // Default to 1 for new tables, matching iceberg-rust
             identifier_field_ids: self.identifier_field_ids,
             struct_type: StructType::new(fields),
         })

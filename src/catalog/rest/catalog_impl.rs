@@ -6,11 +6,11 @@ use super::types::*;
 use super::IcebergRestCatalog;
 use async_trait::async_trait;
 
-// Implementation of icepick Catalog trait (native platforms)
-#[cfg(not(target_family = "wasm"))]
-#[async_trait]
-impl crate::catalog::Catalog for IcebergRestCatalog {
-    async fn create_namespace(
+// Private helper functions containing the actual implementation
+// These are shared between native and WASM implementations
+
+impl IcebergRestCatalog {
+    async fn create_namespace_impl(
         &self,
         namespace: &crate::spec::NamespaceIdent,
         properties: std::collections::HashMap<String, String>,
@@ -46,7 +46,7 @@ impl crate::catalog::Catalog for IcebergRestCatalog {
         Ok(())
     }
 
-    async fn namespace_exists(
+    async fn namespace_exists_impl(
         &self,
         _namespace: &crate::spec::NamespaceIdent,
     ) -> crate::error::Result<bool> {
@@ -55,7 +55,7 @@ impl crate::catalog::Catalog for IcebergRestCatalog {
         ))
     }
 
-    async fn list_tables(
+    async fn list_tables_impl(
         &self,
         _namespace: &crate::spec::NamespaceIdent,
     ) -> crate::error::Result<Vec<crate::spec::TableIdent>> {
@@ -64,15 +64,18 @@ impl crate::catalog::Catalog for IcebergRestCatalog {
         ))
     }
 
-    async fn table_exists(&self, table: &crate::spec::TableIdent) -> crate::error::Result<bool> {
-        match self.load_table(table).await {
+    async fn table_exists_impl(
+        &self,
+        table: &crate::spec::TableIdent,
+    ) -> crate::error::Result<bool> {
+        match self.load_table_impl(table).await {
             Ok(_) => Ok(true),
             Err(crate::error::Error::NotFound { .. }) => Ok(false),
             Err(e) => Err(e),
         }
     }
 
-    async fn create_table(
+    async fn create_table_impl(
         &self,
         namespace: &crate::spec::NamespaceIdent,
         creation: crate::spec::TableCreation,
@@ -85,17 +88,21 @@ impl crate::catalog::Catalog for IcebergRestCatalog {
             name: creation.name().to_string(),
             schema: creation.schema().clone(),
             location: creation.location().map(String::from),
-            partition_spec: serde_json::json!({
-                "spec-id": 0,
-                "fields": []
-            }),
-            write_order: serde_json::json!({
-                "order-id": 0,
-                "fields": []
-            }),
-            properties: creation.properties().clone(),
-            stage_create: false,
+            partition_spec: None, // Will use server defaults
+            write_order: None,    // Will use server defaults
+            properties: if creation.properties().is_empty() {
+                None
+            } else {
+                Some(creation.properties().clone())
+            },
+            stage_create: Some(false),
         };
+
+        eprintln!(
+            "DEBUG: Create table request body: {}",
+            serde_json::to_string_pretty(&body)
+                .unwrap_or_else(|_| "Failed to serialize".to_string())
+        );
 
         let req = self
             .http_client
@@ -123,10 +130,15 @@ impl crate::catalog::Catalog for IcebergRestCatalog {
 
         let table_ident =
             crate::spec::TableIdent::new(namespace.clone(), creation.name().to_string());
-        helpers::build_table(table_ident, table_response.metadata, self.file_io.clone())
+        helpers::build_table(
+            table_ident,
+            table_response.metadata,
+            table_response.metadata_location,
+            self.file_io.clone(),
+        )
     }
 
-    async fn load_table(
+    async fn load_table_impl(
         &self,
         table: &crate::spec::TableIdent,
     ) -> crate::error::Result<crate::table::Table> {
@@ -161,16 +173,21 @@ impl crate::catalog::Catalog for IcebergRestCatalog {
                 crate::error::Error::invalid_input(format!("Failed to parse table response: {}", e))
             })?;
 
-        helpers::build_table(table.clone(), table_response.metadata, self.file_io.clone())
+        helpers::build_table(
+            table.clone(),
+            table_response.metadata,
+            table_response.metadata_location,
+            self.file_io.clone(),
+        )
     }
 
-    async fn drop_table(&self, _table: &crate::spec::TableIdent) -> crate::error::Result<()> {
+    async fn drop_table_impl(&self, _table: &crate::spec::TableIdent) -> crate::error::Result<()> {
         Err(crate::error::Error::unexpected(
             "Dropping tables is not supported",
         ))
     }
 
-    async fn update_table_metadata(
+    async fn update_table_metadata_impl(
         &self,
         identifier: &crate::spec::TableIdent,
         old_metadata_location: &str,
@@ -207,20 +224,41 @@ impl crate::catalog::Catalog for IcebergRestCatalog {
             .map_err(|e| {
                 crate::error::Error::invalid_input(format!("Failed to parse new metadata: {}", e))
             })?;
-        let new_snapshot_id = new_metadata.current_snapshot_id().ok_or_else(|| {
-            crate::error::Error::invalid_input("New metadata has no snapshot".to_string())
-        })?;
+        // Get the new snapshot that was added
+        let new_snapshot = new_metadata
+            .snapshots()
+            .last()
+            .ok_or_else(|| {
+                crate::error::Error::invalid_input("New metadata has no snapshots".to_string())
+            })?
+            .clone();
+        let new_snapshot_id = new_snapshot.snapshot_id();
 
-        // 3. Build commit request
+        eprintln!("DEBUG: New snapshot details:");
+        eprintln!("  snapshot_id: {}", new_snapshot.snapshot_id());
+        eprintln!(
+            "  parent_snapshot_id: {:?}",
+            new_snapshot.parent_snapshot_id()
+        );
+        eprintln!("  schema_id: {:?}", new_snapshot.schema_id());
+
+        // 3. Build commit request with both AddSnapshot and SetSnapshotRef updates
         let request = CommitTableRequest {
             requirements: vec![TableRequirement::AssertCurrentSnapshotId {
                 snapshot_id: current_snapshot_id,
             }],
-            updates: vec![TableUpdate::SetSnapshotRef {
-                ref_name: "main".to_string(),
-                snapshot_id: new_snapshot_id,
-                ref_type: "branch".to_string(),
-            }],
+            updates: vec![
+                // First, add the new snapshot to the table
+                TableUpdate::AddSnapshot {
+                    snapshot: new_snapshot,
+                },
+                // Then, update the main branch reference to point to it
+                TableUpdate::SetSnapshotRef {
+                    ref_name: "main".to_string(),
+                    snapshot_id: new_snapshot_id,
+                    ref_type: "branch".to_string(),
+                },
+            ],
         };
 
         // 4. Send to REST endpoint
@@ -232,70 +270,34 @@ impl crate::catalog::Catalog for IcebergRestCatalog {
     }
 }
 
-// Implementation of icepick Catalog trait (WASM platforms)
-#[cfg(target_family = "wasm")]
-#[async_trait(?Send)]
+// Native platform implementation
+#[cfg(not(target_family = "wasm"))]
+#[async_trait]
 impl crate::catalog::Catalog for IcebergRestCatalog {
     async fn create_namespace(
         &self,
         namespace: &crate::spec::NamespaceIdent,
         properties: std::collections::HashMap<String, String>,
     ) -> crate::error::Result<()> {
-        let namespace_name = namespace.to_string();
-        let url = self.url("namespaces");
-        eprintln!("DEBUG: Creating namespace at URL: {}", url);
-
-        let body = CreateNamespaceRequest {
-            namespace: vec![namespace_name],
-            properties: properties.clone(),
-        };
-
-        let req = self
-            .http_client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .build()
-            .map_err(|e| {
-                crate::error::Error::io_error(format!("Failed to build request: {}", e))
-            })?;
-
-        let response = self
-            .send_request(req)
-            .await
-            .map_err(helpers::from_catalog_error)?;
-        let _json_value = self
-            .handle_response(response)
-            .await
-            .map_err(helpers::from_catalog_error)?;
-
-        Ok(())
+        self.create_namespace_impl(namespace, properties).await
     }
 
     async fn namespace_exists(
         &self,
-        _namespace: &crate::spec::NamespaceIdent,
+        namespace: &crate::spec::NamespaceIdent,
     ) -> crate::error::Result<bool> {
-        Err(crate::error::Error::unexpected(
-            "Checking namespace existence is not supported",
-        ))
+        self.namespace_exists_impl(namespace).await
     }
 
     async fn list_tables(
         &self,
-        _namespace: &crate::spec::NamespaceIdent,
+        namespace: &crate::spec::NamespaceIdent,
     ) -> crate::error::Result<Vec<crate::spec::TableIdent>> {
-        Err(crate::error::Error::unexpected(
-            "Listing tables is not supported",
-        ))
+        self.list_tables_impl(namespace).await
     }
 
     async fn table_exists(&self, table: &crate::spec::TableIdent) -> crate::error::Result<bool> {
-        match self.load_table(table).await {
-            Ok(_) => Ok(true),
-            Err(crate::error::Error::NotFound { .. }) => Ok(false),
-            Err(e) => Err(e),
-        }
+        self.table_exists_impl(table).await
     }
 
     async fn create_table(
@@ -303,97 +305,18 @@ impl crate::catalog::Catalog for IcebergRestCatalog {
         namespace: &crate::spec::NamespaceIdent,
         creation: crate::spec::TableCreation,
     ) -> crate::error::Result<crate::table::Table> {
-        let namespace_name = namespace.to_string();
-        let url = self.url(&format!("namespaces/{}/tables", namespace_name));
-        eprintln!("DEBUG: Creating table at URL: {}", url);
-
-        let body = CreateTableRequest {
-            name: creation.name().to_string(),
-            schema: creation.schema().clone(),
-            location: creation.location().map(String::from),
-            partition_spec: serde_json::json!({
-                "spec-id": 0,
-                "fields": []
-            }),
-            write_order: serde_json::json!({
-                "order-id": 0,
-                "fields": []
-            }),
-            properties: creation.properties().clone(),
-            stage_create: false,
-        };
-
-        let req = self
-            .http_client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .build()
-            .map_err(|e| {
-                crate::error::Error::io_error(format!("Failed to build request: {}", e))
-            })?;
-
-        let response = self
-            .send_request(req)
-            .await
-            .map_err(helpers::from_catalog_error)?;
-        let json_value = self
-            .handle_response(response)
-            .await
-            .map_err(helpers::from_catalog_error)?;
-
-        let table_response: CreateTableResponse =
-            serde_json::from_value(json_value).map_err(|e| {
-                crate::error::Error::invalid_input(format!("Failed to parse table response: {}", e))
-            })?;
-
-        let table_ident =
-            crate::spec::TableIdent::new(namespace.clone(), creation.name().to_string());
-        helpers::build_table(table_ident, table_response.metadata, self.file_io.clone())
+        self.create_table_impl(namespace, creation).await
     }
 
     async fn load_table(
         &self,
         table: &crate::spec::TableIdent,
     ) -> crate::error::Result<crate::table::Table> {
-        let namespace_name = table.namespace().to_string();
-        let url = self.url(&format!(
-            "namespaces/{}/tables/{}",
-            namespace_name,
-            table.name()
-        ));
-        eprintln!("DEBUG: Loading table from URL: {}", url);
-
-        let req = self
-            .http_client
-            .get(&url)
-            .header("Accept", "application/json")
-            .build()
-            .map_err(|e| {
-                crate::error::Error::io_error(format!("Failed to build request: {}", e))
-            })?;
-
-        let response = self
-            .send_request(req)
-            .await
-            .map_err(helpers::from_catalog_error)?;
-        let json_value = self
-            .handle_response(response)
-            .await
-            .map_err(helpers::from_catalog_error)?;
-
-        let table_response: LoadTableResponse =
-            serde_json::from_value(json_value).map_err(|e| {
-                crate::error::Error::invalid_input(format!("Failed to parse table response: {}", e))
-            })?;
-
-        helpers::build_table(table.clone(), table_response.metadata, self.file_io.clone())
+        self.load_table_impl(table).await
     }
 
-    async fn drop_table(&self, _table: &crate::spec::TableIdent) -> crate::error::Result<()> {
-        Err(crate::error::Error::unexpected(
-            "Dropping tables is not supported",
-        ))
+    async fn drop_table(&self, table: &crate::spec::TableIdent) -> crate::error::Result<()> {
+        self.drop_table_impl(table).await
     }
 
     async fn update_table_metadata(
@@ -402,58 +325,67 @@ impl crate::catalog::Catalog for IcebergRestCatalog {
         old_metadata_location: &str,
         new_metadata_location: &str,
     ) -> crate::error::Result<()> {
-        // 1. Load current metadata to get current snapshot ID
-        let current_metadata_bytes =
-            self.file_io
-                .read(old_metadata_location)
-                .await
-                .map_err(|e| {
-                    crate::error::Error::io_error(format!("Failed to read old metadata: {}", e))
-                })?;
-
-        let current_metadata: crate::spec::TableMetadata =
-            serde_json::from_slice(&current_metadata_bytes).map_err(|e| {
-                crate::error::Error::invalid_input(format!(
-                    "Failed to parse current metadata: {}",
-                    e
-                ))
-            })?;
-        let current_snapshot_id = current_metadata.current_snapshot_id();
-
-        // 2. Load new metadata to get new snapshot ID
-        let new_metadata_bytes = self
-            .file_io
-            .read(new_metadata_location)
+        self.update_table_metadata_impl(identifier, old_metadata_location, new_metadata_location)
             .await
-            .map_err(|e| {
-                crate::error::Error::io_error(format!("Failed to read new metadata: {}", e))
-            })?;
+    }
+}
 
-        let new_metadata: crate::spec::TableMetadata = serde_json::from_slice(&new_metadata_bytes)
-            .map_err(|e| {
-                crate::error::Error::invalid_input(format!("Failed to parse new metadata: {}", e))
-            })?;
-        let new_snapshot_id = new_metadata.current_snapshot_id().ok_or_else(|| {
-            crate::error::Error::invalid_input("New metadata has no snapshot".to_string())
-        })?;
+// WASM platform implementation
+#[cfg(target_family = "wasm")]
+#[async_trait(?Send)]
+impl crate::catalog::Catalog for IcebergRestCatalog {
+    async fn create_namespace(
+        &self,
+        namespace: &crate::spec::NamespaceIdent,
+        properties: std::collections::HashMap<String, String>,
+    ) -> crate::error::Result<()> {
+        self.create_namespace_impl(namespace, properties).await
+    }
 
-        // 3. Build commit request
-        let request = CommitTableRequest {
-            requirements: vec![TableRequirement::AssertCurrentSnapshotId {
-                snapshot_id: current_snapshot_id,
-            }],
-            updates: vec![TableUpdate::SetSnapshotRef {
-                ref_name: "main".to_string(),
-                snapshot_id: new_snapshot_id,
-                ref_type: "branch".to_string(),
-            }],
-        };
+    async fn namespace_exists(
+        &self,
+        namespace: &crate::spec::NamespaceIdent,
+    ) -> crate::error::Result<bool> {
+        self.namespace_exists_impl(namespace).await
+    }
 
-        // 4. Send to REST endpoint
-        self.commit_table(identifier, request)
+    async fn list_tables(
+        &self,
+        namespace: &crate::spec::NamespaceIdent,
+    ) -> crate::error::Result<Vec<crate::spec::TableIdent>> {
+        self.list_tables_impl(namespace).await
+    }
+
+    async fn table_exists(&self, table: &crate::spec::TableIdent) -> crate::error::Result<bool> {
+        self.table_exists_impl(table).await
+    }
+
+    async fn create_table(
+        &self,
+        namespace: &crate::spec::NamespaceIdent,
+        creation: crate::spec::TableCreation,
+    ) -> crate::error::Result<crate::table::Table> {
+        self.create_table_impl(namespace, creation).await
+    }
+
+    async fn load_table(
+        &self,
+        table: &crate::spec::TableIdent,
+    ) -> crate::error::Result<crate::table::Table> {
+        self.load_table_impl(table).await
+    }
+
+    async fn drop_table(&self, table: &crate::spec::TableIdent) -> crate::error::Result<()> {
+        self.drop_table_impl(table).await
+    }
+
+    async fn update_table_metadata(
+        &self,
+        identifier: &crate::spec::TableIdent,
+        old_metadata_location: &str,
+        new_metadata_location: &str,
+    ) -> crate::error::Result<()> {
+        self.update_table_metadata_impl(identifier, old_metadata_location, new_metadata_location)
             .await
-            .map_err(helpers::from_catalog_error)?;
-
-        Ok(())
     }
 }

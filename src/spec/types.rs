@@ -59,6 +59,8 @@ pub enum Type {
 /// A struct type (record with named fields)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StructType {
+    #[serde(rename = "type")]
+    r#type: String,
     #[serde(rename = "fields")]
     fields: Vec<NestedField>,
 }
@@ -66,7 +68,10 @@ pub struct StructType {
 impl StructType {
     /// Create a new struct type
     pub fn new(fields: Vec<NestedField>) -> Self {
-        Self { fields }
+        Self {
+            r#type: "struct".to_string(),
+            fields,
+        }
     }
 
     /// Get the fields in this struct

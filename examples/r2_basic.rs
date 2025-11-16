@@ -165,7 +165,7 @@ async fn main() -> Result<()> {
     table
         .transaction()
         .append(vec![data_file])
-        .commit()
+        .commit(&catalog)
         .await
         .context("Failed to commit transaction")?;
 

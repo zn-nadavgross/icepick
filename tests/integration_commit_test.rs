@@ -1,10 +1,67 @@
+use icepick::catalog::Catalog;
 use icepick::io::FileIO;
 use icepick::spec::{
-    DataFile, NamespaceIdent, NestedField, PrimitiveType, Schema, TableIdent, TableMetadata, Type,
+    DataFile, NamespaceIdent, NestedField, PrimitiveType, Schema, TableCreation, TableIdent,
+    TableMetadata, Type,
 };
 use icepick::table::Table;
 use opendal::Operator;
 use std::collections::HashMap;
+
+// Simple in-memory catalog for testing
+struct TestCatalog;
+
+#[async_trait::async_trait]
+impl Catalog for TestCatalog {
+    async fn create_namespace(
+        &self,
+        _namespace: &NamespaceIdent,
+        _properties: HashMap<String, String>,
+    ) -> icepick::error::Result<()> {
+        Ok(())
+    }
+
+    async fn namespace_exists(&self, _namespace: &NamespaceIdent) -> icepick::error::Result<bool> {
+        Ok(true)
+    }
+
+    async fn list_tables(
+        &self,
+        _namespace: &NamespaceIdent,
+    ) -> icepick::error::Result<Vec<TableIdent>> {
+        Ok(vec![])
+    }
+
+    async fn table_exists(&self, _identifier: &TableIdent) -> icepick::error::Result<bool> {
+        Ok(true)
+    }
+
+    async fn create_table(
+        &self,
+        _namespace: &NamespaceIdent,
+        _creation: TableCreation,
+    ) -> icepick::error::Result<Table> {
+        unimplemented!("TestCatalog::create_table")
+    }
+
+    async fn load_table(&self, _identifier: &TableIdent) -> icepick::error::Result<Table> {
+        unimplemented!("TestCatalog::load_table")
+    }
+
+    async fn drop_table(&self, _identifier: &TableIdent) -> icepick::error::Result<()> {
+        Ok(())
+    }
+
+    async fn update_table_metadata(
+        &self,
+        _identifier: &TableIdent,
+        _old_metadata_location: &str,
+        _new_metadata_location: &str,
+    ) -> icepick::error::Result<()> {
+        // For tests, we just no-op - the files are already written
+        Ok(())
+    }
+}
 
 #[tokio::test]
 async fn test_end_to_end_commit_with_stats() {
@@ -61,10 +118,11 @@ async fn test_end_to_end_commit_with_stats() {
         .unwrap();
 
     // Commit
+    let catalog = TestCatalog;
     table
         .transaction()
         .append(vec![data_file])
-        .commit()
+        .commit(&catalog)
         .await
         .unwrap();
 
@@ -149,6 +207,7 @@ async fn test_multiple_sequential_commits() {
     );
 
     // First commit
+    let catalog = TestCatalog;
     let data_file1 = DataFile::builder()
         .with_file_path("memory://warehouse/test/multi/data/file1.parquet")
         .with_file_format("PARQUET")
@@ -160,7 +219,7 @@ async fn test_multiple_sequential_commits() {
     table
         .transaction()
         .append(vec![data_file1])
-        .commit()
+        .commit(&catalog)
         .await
         .unwrap();
 
@@ -190,7 +249,7 @@ async fn test_multiple_sequential_commits() {
     table
         .transaction()
         .append(vec![data_file2])
-        .commit()
+        .commit(&catalog)
         .await
         .unwrap();
 

@@ -181,7 +181,6 @@ impl IcebergRestCatalog {
     }
 
     /// Commit table changes
-    #[allow(dead_code)]
     pub async fn commit_table(
         &self,
         identifier: &TableIdent,
@@ -190,9 +189,14 @@ impl IcebergRestCatalog {
         let namespace = identifier.namespace().as_ref().join("/");
         let table_name = identifier.name();
 
-        let url = format!(
-            "{}/v1/namespaces/{}/tables/{}",
-            self.endpoint, namespace, table_name
+        let url = self.url(&format!("namespaces/{}/tables/{}", namespace, table_name));
+
+        // Diagnostic logging for debugging
+        eprintln!("DEBUG: Commit table URL: {}", url);
+        eprintln!(
+            "DEBUG: Commit request: {}",
+            serde_json::to_string_pretty(&request)
+                .unwrap_or_else(|_| "Failed to serialize".to_string())
         );
 
         let req = self
@@ -204,15 +208,18 @@ impl IcebergRestCatalog {
 
         let response = self.send_request(req).await?;
 
+        eprintln!("DEBUG: Commit response status: {}", response.status());
+
         if response.status().as_u16() == 409 {
             return Err(CatalogError::Conflict(
                 "Concurrent modification detected".to_string(),
             ));
         }
 
-        let commit_response: CommitTableResponse = response
-            .json()
-            .await
+        // Handle response using common handler (supports empty responses)
+        let json_value = self.handle_response(response).await?;
+
+        let commit_response: CommitTableResponse = serde_json::from_value(json_value)
             .map_err(|e| CatalogError::HttpError(format!("Failed to parse response: {}", e)))?;
 
         Ok(commit_response)

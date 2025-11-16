@@ -19,12 +19,8 @@ pub fn from_catalog_error(e: CatalogError) -> Error {
 pub fn build_table(
     ident: TableIdent,
     metadata: TableMetadata,
+    metadata_location: String,
     file_io: crate::io::FileIO,
 ) -> Result<Table> {
-    let metadata_location = format!(
-        "{}/metadata/00000-initial.metadata.json",
-        metadata.location()
-    );
-
     Ok(Table::new(ident, metadata, metadata_location, file_io))
 }

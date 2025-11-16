@@ -71,7 +71,7 @@ impl SummaryBuilder {
 pub struct Snapshot {
     #[serde(rename = "snapshot-id")]
     snapshot_id: i64,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "parent-snapshot-id", skip_serializing_if = "Option::is_none")]
     parent_snapshot_id: Option<i64>,
     #[serde(rename = "sequence-number", skip_serializing_if = "Option::is_none")]
     sequence_number: Option<i64>,
@@ -80,7 +80,7 @@ pub struct Snapshot {
     #[serde(rename = "manifest-list")]
     manifest_list: String,
     summary: Summary,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "schema-id", skip_serializing_if = "Option::is_none")]
     schema_id: Option<i32>,
 }
 

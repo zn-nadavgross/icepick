@@ -1,6 +1,7 @@
 use anyhow::{ensure, Context, Result};
 use futures::stream::StreamExt;
 use iceberg::spec::{DataFileFormat, NestedField, PrimitiveType, Schema, Type};
+use iceberg::transaction::{ApplyTransactionAction, Transaction};
 use iceberg::writer::base_writer::data_file_writer::DataFileWriterBuilder;
 use iceberg::writer::file_writer::location_generator::{
     DefaultFileNameGenerator, DefaultLocationGenerator,
@@ -172,6 +173,17 @@ async fn main() -> Result<()> {
         batch.num_rows(),
         data_files.len()
     );
+
+    // Commit data files to table via transaction
+    let tx = Transaction::new(&table);
+    let action = tx.fast_append().add_data_files(data_files);
+    let tx = action.apply(tx).context("Failed to apply transaction action")?;
+    let table = tx
+        .commit(&catalog)
+        .await
+        .context("Failed to commit transaction")?;
+
+    println!("✓ Committed snapshot to table");
 
     let scan = table
         .scan()

@@ -6,21 +6,16 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Content type of a data file
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum DataContentType {
     /// Regular data
+    #[default]
     Data,
     /// Position deletes
     PositionDeletes,
     /// Equality deletes
     EqualityDeletes,
-}
-
-impl Default for DataContentType {
-    fn default() -> Self {
-        Self::Data
-    }
 }
 
 /// Metadata about a data file in an Iceberg table

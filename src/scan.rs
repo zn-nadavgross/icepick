@@ -5,11 +5,17 @@ use crate::reader::DataFileEntry;
 use crate::table::Table;
 use arrow::record_batch::RecordBatch;
 use bytes::Bytes;
-use futures::stream::{BoxStream, StreamExt};
+use futures::stream::StreamExt;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use std::pin::Pin;
 
 /// A stream of Arrow RecordBatches
-pub type ArrowRecordBatchStream = BoxStream<'static, Result<RecordBatch>>;
+/// On WASM, we don't require Send since WASM is single-threaded
+#[cfg(not(target_arch = "wasm32"))]
+pub type ArrowRecordBatchStream = Pin<Box<dyn futures::Stream<Item = Result<RecordBatch>> + Send>>;
+
+#[cfg(target_arch = "wasm32")]
+pub type ArrowRecordBatchStream = Pin<Box<dyn futures::Stream<Item = Result<RecordBatch>>>>;
 
 /// Builder for creating table scans
 pub struct TableScanBuilder<'a> {

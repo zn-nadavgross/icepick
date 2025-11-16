@@ -57,13 +57,10 @@ jobs:
         run: cargo doc --no-deps --all-features
 
   # WASM build to verify R2Catalog compiles for browser/Workers
-  # NOTE: Currently fails due to iceberg-rust v0.7.0 lacking WASM support (tokio limitations)
-  # This job serves as a canary - it will start passing once iceberg-rust adds WASM support
+  # Uses conditional compilation to remove Send bounds on WASM (single-threaded)
   test-wasm:
-    if: false
-    name: Test WASM Build (Expected to fail until iceberg-rust adds WASM support)
+    name: Test WASM Build
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 

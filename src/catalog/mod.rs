@@ -3,7 +3,7 @@
 mod auth;
 pub mod rest;
 
-pub use auth::{AuthProvider, BearerTokenAuthProvider};
+pub use auth::BearerTokenAuthProvider;
 
 #[cfg(not(target_family = "wasm"))]
 pub use auth::SigV4AuthProvider;

@@ -1,16 +1,17 @@
 mod arn;
+mod helpers;
 mod types;
 
 use self::arn::{parse_s3tables_arn, ARN_ENCODE_SET};
+use self::helpers::to_iceberg_error;
 use self::types::*;
 use crate::catalog::{AuthProvider, CatalogError, R2Config, Result};
 use async_trait::async_trait;
 use iceberg::io::FileIO;
-use iceberg::spec::TableMetadata;
 use iceberg::table::Table;
 use iceberg::{
-    Catalog, Error as IcebergError, ErrorKind, Namespace, NamespaceIdent,
-    Result as IcebergResult, TableCommit, TableCreation, TableIdent,
+    Catalog, Error as IcebergError, ErrorKind, Namespace, NamespaceIdent, Result as IcebergResult,
+    TableCommit, TableCreation, TableIdent,
 };
 use percent_encoding::utf8_percent_encode;
 use reqwest::{Client, Response};
@@ -65,7 +66,9 @@ impl IcebergRestCatalog {
             )
         });
 
-        let auth = Box::new(crate::catalog::BearerTokenAuthProvider::new(config.api_token));
+        let auth = Box::new(crate::catalog::BearerTokenAuthProvider::new(
+            config.api_token,
+        ));
         let http_client = Client::new();
 
         // Create FileIO for S3 access
@@ -196,33 +199,6 @@ impl IcebergRestCatalog {
             }
         }
     }
-
-    fn build_table(&self, ident: TableIdent, metadata: TableMetadata) -> IcebergResult<Table> {
-        let metadata_location = format!(
-            "{}/metadata/00000-initial.metadata.json",
-            metadata.location()
-        );
-
-        Table::builder()
-            .identifier(ident)
-            .metadata(metadata)
-            .metadata_location(metadata_location)
-            .file_io(self.file_io.clone())
-            .build()
-    }
-}
-
-fn to_iceberg_error(e: CatalogError) -> IcebergError {
-    match e {
-        CatalogError::NotFound(msg) => IcebergError::new(ErrorKind::DataInvalid, msg),
-        CatalogError::Conflict(msg) => IcebergError::new(ErrorKind::DataInvalid, msg),
-        CatalogError::InvalidRequest(msg) => IcebergError::new(ErrorKind::DataInvalid, msg),
-        CatalogError::AuthError(msg) => IcebergError::new(ErrorKind::Unexpected, msg),
-        CatalogError::HttpError(msg) => IcebergError::new(ErrorKind::Unexpected, msg),
-        CatalogError::InvalidArn(msg) => IcebergError::new(ErrorKind::DataInvalid, msg),
-        CatalogError::InvalidConfig(msg) => IcebergError::new(ErrorKind::DataInvalid, msg),
-        CatalogError::Unexpected(msg) => IcebergError::new(ErrorKind::Unexpected, msg),
-    }
 }
 
 #[async_trait]
@@ -256,10 +232,18 @@ impl Catalog for IcebergRestCatalog {
             .header("Content-Type", "application/json")
             .json(&body)
             .build()
-            .map_err(|e| IcebergError::new(ErrorKind::Unexpected, format!("Failed to build request: {}", e)))?;
+            .map_err(|e| {
+                IcebergError::new(
+                    ErrorKind::Unexpected,
+                    format!("Failed to build request: {}", e),
+                )
+            })?;
 
         let response = self.send_request(req).await.map_err(to_iceberg_error)?;
-        let _json_value = self.handle_response(response).await.map_err(to_iceberg_error)?;
+        let _json_value = self
+            .handle_response(response)
+            .await
+            .map_err(to_iceberg_error)?;
 
         Ok(Namespace::with_properties(namespace.clone(), properties))
     }
@@ -336,16 +320,29 @@ impl Catalog for IcebergRestCatalog {
             .header("Content-Type", "application/json")
             .json(&body)
             .build()
-            .map_err(|e| IcebergError::new(ErrorKind::Unexpected, format!("Failed to build request: {}", e)))?;
+            .map_err(|e| {
+                IcebergError::new(
+                    ErrorKind::Unexpected,
+                    format!("Failed to build request: {}", e),
+                )
+            })?;
 
         let response = self.send_request(req).await.map_err(to_iceberg_error)?;
-        let json_value = self.handle_response(response).await.map_err(to_iceberg_error)?;
+        let json_value = self
+            .handle_response(response)
+            .await
+            .map_err(to_iceberg_error)?;
 
-        let table_response: CreateTableResponse = serde_json::from_value(json_value)
-            .map_err(|e| IcebergError::new(ErrorKind::Unexpected, format!("Failed to parse table response: {}", e)))?;
+        let table_response: CreateTableResponse =
+            serde_json::from_value(json_value).map_err(|e| {
+                IcebergError::new(
+                    ErrorKind::Unexpected,
+                    format!("Failed to parse table response: {}", e),
+                )
+            })?;
 
         let table_ident = TableIdent::new(namespace.clone(), creation.name);
-        self.build_table(table_ident, table_response.metadata)
+        helpers::build_table(table_ident, table_response.metadata, self.file_io.clone())
     }
 
     async fn load_table(&self, table: &TableIdent) -> IcebergResult<Table> {
@@ -360,15 +357,28 @@ impl Catalog for IcebergRestCatalog {
             .get(&url)
             .header("Accept", "application/json")
             .build()
-            .map_err(|e| IcebergError::new(ErrorKind::Unexpected, format!("Failed to build request: {}", e)))?;
+            .map_err(|e| {
+                IcebergError::new(
+                    ErrorKind::Unexpected,
+                    format!("Failed to build request: {}", e),
+                )
+            })?;
 
         let response = self.send_request(req).await.map_err(to_iceberg_error)?;
-        let json_value = self.handle_response(response).await.map_err(to_iceberg_error)?;
+        let json_value = self
+            .handle_response(response)
+            .await
+            .map_err(to_iceberg_error)?;
 
-        let table_response: LoadTableResponse = serde_json::from_value(json_value)
-            .map_err(|e| IcebergError::new(ErrorKind::Unexpected, format!("Failed to parse table response: {}", e)))?;
+        let table_response: LoadTableResponse =
+            serde_json::from_value(json_value).map_err(|e| {
+                IcebergError::new(
+                    ErrorKind::Unexpected,
+                    format!("Failed to parse table response: {}", e),
+                )
+            })?;
 
-        self.build_table(table.clone(), table_response.metadata)
+        helpers::build_table(table.clone(), table_response.metadata, self.file_io.clone())
     }
 
     async fn drop_table(&self, _table: &TableIdent) -> IcebergResult<()> {
@@ -428,14 +438,27 @@ impl Catalog for IcebergRestCatalog {
             .header("Content-Type", "application/json")
             .json(&body)
             .build()
-            .map_err(|e| IcebergError::new(ErrorKind::Unexpected, format!("Failed to build request: {}", e)))?;
+            .map_err(|e| {
+                IcebergError::new(
+                    ErrorKind::Unexpected,
+                    format!("Failed to build request: {}", e),
+                )
+            })?;
 
         let response = self.send_request(req).await.map_err(to_iceberg_error)?;
-        let json_value = self.handle_response(response).await.map_err(to_iceberg_error)?;
+        let json_value = self
+            .handle_response(response)
+            .await
+            .map_err(to_iceberg_error)?;
 
-        let table_response: UpdateTableResponse = serde_json::from_value(json_value)
-            .map_err(|e| IcebergError::new(ErrorKind::Unexpected, format!("Failed to parse table response: {}", e)))?;
+        let table_response: UpdateTableResponse =
+            serde_json::from_value(json_value).map_err(|e| {
+                IcebergError::new(
+                    ErrorKind::Unexpected,
+                    format!("Failed to parse table response: {}", e),
+                )
+            })?;
 
-        self.build_table(table_ident, table_response.metadata)
+        helpers::build_table(table_ident, table_response.metadata, self.file_io.clone())
     }
 }

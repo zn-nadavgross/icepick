@@ -44,7 +44,9 @@ impl AuthProvider for SigV4AuthProvider {
             .method(method.as_str())
             .uri(url.as_str())
             .body(&body_bytes[..])
-            .map_err(|e| CatalogError::Unexpected(format!("Failed to build HTTP request: {}", e)))?;
+            .map_err(|e| {
+                CatalogError::Unexpected(format!("Failed to build HTTP request: {}", e))
+            })?;
 
         // Copy original headers
         for (name, value) in headers.iter() {

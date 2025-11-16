@@ -19,19 +19,15 @@ impl BearerTokenAuthProvider {
 impl AuthProvider for BearerTokenAuthProvider {
     async fn sign_request(&self, mut request: reqwest::Request) -> Result<reqwest::Request> {
         // Add Authorization header with Bearer token
-        request
-            .headers_mut()
-            .insert(
-                reqwest::header::AUTHORIZATION,
-                format!("Bearer {}", self.token)
-                    .parse()
-                    .map_err(|e| {
-                        crate::catalog::CatalogError::AuthError(format!(
-                            "Failed to create auth header: {}",
-                            e
-                        ))
-                    })?,
-            );
+        request.headers_mut().insert(
+            reqwest::header::AUTHORIZATION,
+            format!("Bearer {}", self.token).parse().map_err(|e| {
+                crate::catalog::CatalogError::AuthError(format!(
+                    "Failed to create auth header: {}",
+                    e
+                ))
+            })?,
+        );
         Ok(request)
     }
 }

@@ -1,5 +1,5 @@
-use iceberg::spec::{Schema, TableMetadata};
-use iceberg::{TableRequirement, TableUpdate};
+use crate::spec::{Schema, TableMetadata};
+use super::commit_types::{TableRequirement, TableUpdate};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

@@ -5,8 +5,8 @@ use super::commit_types::{CommitTableRequest, CommitTableResponse};
 use super::types;
 use super::IcebergRestCatalog;
 use crate::catalog::{AuthProvider, CatalogError, R2Config, Result};
+use crate::io::FileIO;
 use crate::spec::TableIdent;
-use iceberg::io::FileIO;
 use percent_encoding::utf8_percent_encode;
 use reqwest::Client;
 
@@ -97,26 +97,27 @@ impl IcebergRestCatalog {
         eprintln!("DEBUG: Using prefix from server: '{}'", prefix);
         eprintln!("DEBUG: Config properties: {:?}", properties);
 
-        // Configure FileIO for R2 S3-compatible storage
-        let mut file_io_builder = FileIO::from_path("s3://")
-            .map_err(|e| CatalogError::Unexpected(format!("Failed to create FileIO: {}", e)))?;
-
-        // Set R2's S3-compatible endpoint
+        // Configure FileIO for R2 S3-compatible storage using opendal
         let r2_endpoint = format!("https://{}.r2.cloudflarestorage.com", config.account_id);
         eprintln!("DEBUG: Setting S3 endpoint to: {}", r2_endpoint);
-        file_io_builder = file_io_builder.with_prop("s3.endpoint", &r2_endpoint);
 
-        // Apply all properties from config response to FileIO
+        let mut s3_config_vec = vec![
+            ("endpoint".to_string(), r2_endpoint),
+            ("bucket".to_string(), config.bucket_name.clone()),
+        ];
+
+        // Apply properties from config response
         for (key, value) in &properties {
             if key.starts_with("s3.") {
-                eprintln!("DEBUG: Setting FileIO property: {}={}", key, value);
-                file_io_builder = file_io_builder.with_prop(key, value);
+                eprintln!("DEBUG: FileIO property: {}={}", key, value);
+                let opendal_key = key.strip_prefix("s3.").unwrap_or(key).to_string();
+                s3_config_vec.push((opendal_key, value.clone()));
             }
         }
 
-        let file_io = file_io_builder
-            .build()
-            .map_err(|e| CatalogError::Unexpected(format!("Failed to build FileIO: {}", e)))?;
+        let operator = opendal::Operator::via_iter(opendal::Scheme::S3, s3_config_vec)
+            .map_err(|e| CatalogError::Unexpected(format!("Failed to create S3 operator: {}", e)))?;
+        let file_io = FileIO::new(operator);
 
         Ok(Self {
             endpoint,
@@ -154,11 +155,14 @@ impl IcebergRestCatalog {
 
         let http_client = Client::new();
 
-        // Create FileIO for S3 access
-        let file_io = FileIO::from_path("s3://")
-            .map_err(|e| CatalogError::Unexpected(format!("Failed to create FileIO: {}", e)))?
-            .build()
-            .map_err(|e| CatalogError::Unexpected(format!("Failed to build FileIO: {}", e)))?;
+        // Create FileIO for S3 access using opendal
+        let s3_config = vec![
+            ("region".to_string(), region.clone()),
+        ];
+
+        let operator = opendal::Operator::via_iter(opendal::Scheme::S3, s3_config)
+            .map_err(|e| CatalogError::Unexpected(format!("Failed to create S3 operator: {}", e)))?;
+        let file_io = FileIO::new(operator);
 
         Ok(Self {
             endpoint,

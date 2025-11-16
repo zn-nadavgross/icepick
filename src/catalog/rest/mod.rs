@@ -6,7 +6,7 @@ mod helpers;
 mod types;
 
 use crate::catalog::{AuthProvider, CatalogError, Result};
-use iceberg::io::FileIO;
+use crate::io::FileIO;
 use reqwest::{Client, Response};
 
 /// Shared Iceberg REST catalog implementation

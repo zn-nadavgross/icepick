@@ -56,8 +56,8 @@ mod transaction;
 pub use error::{Error, Result};
 pub use io::FileIO;
 pub use spec::{
-    NamespaceIdent, NestedField, PrimitiveType, Schema, Snapshot, StructType, Summary, TableIdent,
-    TableMetadata, Type,
+    DataContentType, DataFile, NamespaceIdent, NestedField, PrimitiveType, Schema, Snapshot,
+    StructType, Summary, TableIdent, TableMetadata, Type,
 };
 pub use table::Table;
 pub use transaction::Transaction;

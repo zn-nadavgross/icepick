@@ -70,9 +70,21 @@ async fn main() -> Result<()> {
 
     let namespace = NamespaceIdent::new(vec![namespace_name.clone()]);
 
-    // Note: S3 Tables may not support namespace creation via REST API
-    // Namespaces might need to be created in AWS console
-    println!("ℹ Using namespace: {} (assuming it exists)", namespace_name);
+    // Try to create the namespace
+    println!("Creating namespace: {}", namespace_name);
+    match catalog
+        .create_namespace(&namespace, Default::default())
+        .await
+    {
+        Ok(_) => println!("✓ Created namespace: {}", namespace_name),
+        Err(e) if e.to_string().contains("lready exists") || e.to_string().contains("Conflict") => {
+            println!("ℹ Namespace already exists: {}", namespace_name)
+        }
+        Err(e) => {
+            eprintln!("Warning: Failed to create namespace: {}", e);
+            println!("ℹ Attempting to continue with existing namespace");
+        }
+    }
 
     let schema = build_schema()?;
 

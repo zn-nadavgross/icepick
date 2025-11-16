@@ -1,8 +1,10 @@
 //! Catalog trait implementation for IcebergRestCatalog
 
+use super::commit_types::{CommitTableRequest, TableRequirement, TableUpdate};
 use super::helpers::{self, to_iceberg_error};
 use super::types::*;
 use super::IcebergRestCatalog;
+use crate::catalog::Result as CatalogResult;
 use async_trait::async_trait;
 use iceberg::table::Table;
 use iceberg::{
@@ -270,5 +272,92 @@ impl Catalog for IcebergRestCatalog {
             })?;
 
         helpers::build_table(table_ident, table_response.metadata, self.file_io.clone())
+    }
+}
+
+// Internal methods for icepick
+impl IcebergRestCatalog {
+    /// Update table metadata atomically (for commit orchestrator)
+    #[allow(dead_code)]
+    pub async fn update_table_metadata(
+        &self,
+        identifier: &crate::spec::TableIdent,
+        old_metadata_location: &str,
+        new_metadata_location: &str,
+    ) -> CatalogResult<()> {
+        // 1. Load current metadata to get current snapshot ID
+        let current_metadata_bytes = self
+            .file_io
+            .new_input(old_metadata_location)
+            .map_err(|e| {
+                crate::catalog::CatalogError::Unexpected(format!(
+                    "Failed to create input for old metadata: {}",
+                    e
+                ))
+            })?
+            .read()
+            .await
+            .map_err(|e| {
+                crate::catalog::CatalogError::Unexpected(format!(
+                    "Failed to read old metadata: {}",
+                    e
+                ))
+            })?;
+
+        let current_metadata: crate::spec::TableMetadata =
+            serde_json::from_slice(&current_metadata_bytes).map_err(|e| {
+                crate::catalog::CatalogError::Unexpected(format!(
+                    "Failed to parse current metadata: {}",
+                    e
+                ))
+            })?;
+        let current_snapshot_id = current_metadata.current_snapshot_id();
+
+        // 2. Load new metadata to get new snapshot ID
+        let new_metadata_bytes = self
+            .file_io
+            .new_input(new_metadata_location)
+            .map_err(|e| {
+                crate::catalog::CatalogError::Unexpected(format!(
+                    "Failed to create input for new metadata: {}",
+                    e
+                ))
+            })?
+            .read()
+            .await
+            .map_err(|e| {
+                crate::catalog::CatalogError::Unexpected(format!(
+                    "Failed to read new metadata: {}",
+                    e
+                ))
+            })?;
+
+        let new_metadata: crate::spec::TableMetadata = serde_json::from_slice(&new_metadata_bytes)
+            .map_err(|e| {
+                crate::catalog::CatalogError::Unexpected(format!(
+                    "Failed to parse new metadata: {}",
+                    e
+                ))
+            })?;
+        let new_snapshot_id = new_metadata.current_snapshot_id().ok_or_else(|| {
+            crate::catalog::CatalogError::InvalidRequest("New metadata has no snapshot".to_string())
+        })?;
+
+        // 3. Build commit request
+        let request = CommitTableRequest {
+            requirements: vec![TableRequirement::AssertCurrentSnapshotId {
+                snapshot_id: current_snapshot_id,
+            }],
+            updates: vec![TableUpdate::SetSnapshotRef {
+                ref_name: "main".to_string(),
+                snapshot_id: new_snapshot_id,
+                ref_type: "branch".to_string(),
+            }],
+        };
+
+        // 4. Send to REST endpoint
+        self.commit_table(identifier, request).await?;
+
+        Ok(())
     }
 }

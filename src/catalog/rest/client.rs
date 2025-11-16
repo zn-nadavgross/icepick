@@ -1,9 +1,11 @@
 //! Client constructor methods for IcebergRestCatalog
 
 use super::arn::{parse_s3tables_arn, ARN_ENCODE_SET};
+use super::commit_types::{CommitTableRequest, CommitTableResponse};
 use super::types;
 use super::IcebergRestCatalog;
 use crate::catalog::{AuthProvider, CatalogError, R2Config, Result};
+use crate::spec::TableIdent;
 use iceberg::io::FileIO;
 use percent_encoding::utf8_percent_encode;
 use reqwest::Client;
@@ -166,5 +168,43 @@ impl IcebergRestCatalog {
             file_io,
             name,
         })
+    }
+
+    /// Commit table changes
+    #[allow(dead_code)]
+    pub async fn commit_table(
+        &self,
+        identifier: &TableIdent,
+        request: CommitTableRequest,
+    ) -> Result<CommitTableResponse> {
+        let namespace = identifier.namespace().as_ref().join("/");
+        let table_name = identifier.name();
+
+        let url = format!(
+            "{}/v1/namespaces/{}/tables/{}",
+            self.endpoint, namespace, table_name
+        );
+
+        let req = self
+            .http_client
+            .post(&url)
+            .json(&request)
+            .build()
+            .map_err(|e| CatalogError::HttpError(format!("Failed to build request: {}", e)))?;
+
+        let response = self.send_request(req).await?;
+
+        if response.status().as_u16() == 409 {
+            return Err(CatalogError::Conflict(
+                "Concurrent modification detected".to_string(),
+            ));
+        }
+
+        let commit_response: CommitTableResponse = response
+            .json()
+            .await
+            .map_err(|e| CatalogError::HttpError(format!("Failed to parse response: {}", e)))?;
+
+        Ok(commit_response)
     }
 }

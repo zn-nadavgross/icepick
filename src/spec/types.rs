@@ -56,10 +56,33 @@ pub enum Type {
     Map(MapType),
 }
 
-/// Placeholder for struct type (will implement in next task)
+/// A struct type (record with named fields)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StructType {
+    #[serde(rename = "fields")]
     fields: Vec<NestedField>,
+}
+
+impl StructType {
+    /// Create a new struct type
+    pub fn new(fields: Vec<NestedField>) -> Self {
+        Self { fields }
+    }
+
+    /// Get the fields in this struct
+    pub fn fields(&self) -> &[NestedField] {
+        &self.fields
+    }
+
+    /// Get a field by name
+    pub fn field_by_name(&self, name: &str) -> Option<&NestedField> {
+        self.fields.iter().find(|f| f.name() == name)
+    }
+
+    /// Get a field by ID
+    pub fn field_by_id(&self, id: i32) -> Option<&NestedField> {
+        self.fields.iter().find(|f| f.id() == id)
+    }
 }
 
 /// Placeholder for list type

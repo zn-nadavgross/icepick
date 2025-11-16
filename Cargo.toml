@@ -15,6 +15,7 @@ serde_json = "1.0"
 async-trait = "0.1"
 thiserror = "2.0"
 percent-encoding = "2.3"
+uuid = { version = "1.0", features = ["v4", "serde"] }
 
 # AWS (non-WASM targets only)
 [target.'cfg(not(target_family = "wasm"))'.dependencies]

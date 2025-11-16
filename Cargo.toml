@@ -12,7 +12,7 @@ async-trait = "0.1"
 thiserror = "2.0"
 percent-encoding = "2.3"
 uuid = { version = "1.0", features = ["v4", "serde", "js"] }
-opendal = { version = "0.51", default-features = false, features = ["services-memory"] }
+opendal = { version = "0.51", default-features = false, features = ["services-memory", "services-s3"] }
 apache-avro = "0.21"
 arrow = { version = "55.2.0", default-features = false, features = ["prettyprint"] }
 parquet = { version = "55.2.0", default-features = false, features = ["arrow"] }

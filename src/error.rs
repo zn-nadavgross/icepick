@@ -55,6 +55,10 @@ pub enum Error {
     /// Unexpected error
     #[error("Unexpected error: {message}")]
     Unexpected { message: String },
+
+    /// Invalid input (validation error)
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
 }
 
 impl Error {
@@ -159,6 +163,9 @@ impl From<Error> for iceberg::Error {
             }
             Error::Unexpected { message } => {
                 iceberg::Error::new(iceberg::ErrorKind::Unexpected, message)
+            }
+            Error::InvalidInput(message) => {
+                iceberg::Error::new(iceberg::ErrorKind::DataInvalid, message)
             }
         }
     }

@@ -6,8 +6,10 @@
 
 pub mod identifier;
 pub mod schema;
+pub mod snapshot;
 pub mod types;
 
 pub use identifier::{NamespaceIdent, TableIdent};
 pub use schema::Schema;
+pub use snapshot::{Snapshot, Summary};
 pub use types::{NestedField, PrimitiveType, StructType, Type};

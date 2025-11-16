@@ -94,6 +94,16 @@ pub struct S3TablesClient {
     signer: Signer<Credential>,
 }
 
+impl std::fmt::Debug for S3TablesClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("S3TablesClient")
+            .field("endpoint", &self.endpoint)
+            .field("warehouse", &self.warehouse)
+            .field("region", &self.region)
+            .finish_non_exhaustive()
+    }
+}
+
 impl S3TablesClient {
     pub async fn from_arn(arn: &str) -> Result<Self> {
         let (region, _bucket_name) = parse_s3tables_arn(arn)?;

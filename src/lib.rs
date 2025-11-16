@@ -54,6 +54,7 @@ pub mod manifest;
 pub mod spec;
 pub mod table;
 pub mod transaction;
+pub mod writer;
 
 // Re-export common types
 pub use error::{Error, Result};

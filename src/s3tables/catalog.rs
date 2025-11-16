@@ -15,8 +15,9 @@ use std::collections::HashMap;
 /// Wraps S3TablesClient to implement the iceberg::Catalog trait,
 /// allowing it to be used as a drop-in replacement for RestCatalog.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct S3TablesCatalog {
-    client: S3TablesClient,
+    pub client: S3TablesClient,
     file_io: FileIO,
     name: String,
 }
@@ -26,8 +27,9 @@ impl S3TablesCatalog {
     pub async fn from_arn(name: String, arn: &str) -> S3Result<Self> {
         let client = S3TablesClient::from_arn(arn).await?;
 
-        // Create FileIO for S3 access
-        let file_io = FileIO::from_path(&arn)
+        // Create FileIO for S3 access with default configuration
+        // The actual S3 paths will come from table metadata
+        let file_io = FileIO::from_path("s3://")
             .map_err(|e| S3TablesError::Unexpected(format!("Failed to create FileIO: {}", e)))?
             .build()
             .map_err(|e| S3TablesError::Unexpected(format!("Failed to build FileIO: {}", e)))?;
@@ -77,10 +79,7 @@ impl Catalog for S3TablesCatalog {
             .await
             .map_err(to_iceberg_error)?;
 
-        Ok(Namespace::with_properties(
-            namespace.clone(),
-            properties,
-        ))
+        Ok(Namespace::with_properties(namespace.clone(), properties))
     }
 
     async fn get_namespace(&self, _namespace: &NamespaceIdent) -> IcebergResult<Namespace> {
@@ -205,7 +204,10 @@ impl Catalog for S3TablesCatalog {
 impl S3TablesCatalog {
     /// Helper to build a Table from TableMetadata
     fn build_table(&self, ident: TableIdent, metadata: TableMetadata) -> IcebergResult<Table> {
-        let metadata_location = format!("{}/metadata/00000-initial.metadata.json", metadata.location());
+        let metadata_location = format!(
+            "{}/metadata/00000-initial.metadata.json",
+            metadata.location()
+        );
 
         Table::builder()
             .identifier(ident)

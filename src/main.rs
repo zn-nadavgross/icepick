@@ -11,7 +11,6 @@ use iceberg::writer::{IcebergWriter, IcebergWriterBuilder};
 use iceberg::NamespaceIdent;
 use iceberg::{Catalog, TableCreation};
 use parquet::file::properties::WriterProperties;
-use std::collections::HashMap;
 
 mod s3tables;
 use s3tables::S3TablesCatalog;
@@ -81,7 +80,7 @@ use arrow::util::pretty::print_batches;
 
 /// Print Arrow RecordBatch in pretty table format
 fn print_batch(batch: &RecordBatch) -> Result<()> {
-    print_batches(&[batch.clone()]).context("Failed to print batch")?;
+    print_batches(std::slice::from_ref(batch)).context("Failed to print batch")?;
     Ok(())
 }
 
@@ -108,28 +107,34 @@ async fn main() -> Result<()> {
 
     let namespace = NamespaceIdent::new(namespace_name.clone());
 
-    // Try to create namespace (may already exist)
-    match catalog.create_namespace(&namespace, HashMap::new()).await {
-        Ok(_) => println!("✓ Created namespace: {}", namespace_name),
-        Err(e) if e.to_string().contains("already exists") => {
-            println!("✓ Namespace already exists: {}", namespace_name)
-        }
-        Err(e) => return Err(e).context("Failed to create namespace")?,
-    }
+    // Note: S3 Tables may not support namespace creation via REST API
+    // Namespaces might need to be created in AWS console
+    println!("ℹ Using namespace: {} (assuming it exists)", namespace_name);
 
     let schema = build_schema()?;
 
-    let table_creation = TableCreation::builder()
-        .name(table_name.clone())
-        .schema(schema)
-        .build();
+    // Try to load the table first, create if it doesn't exist
+    let table_ident = iceberg::TableIdent::new(namespace.clone(), table_name.clone());
+    let table = match catalog.load_table(&table_ident).await {
+        Ok(table) => {
+            println!("✓ Loaded existing table: {}.{}", namespace_name, table_name);
+            table
+        }
+        Err(_) => {
+            let table_creation = TableCreation::builder()
+                .name(table_name.clone())
+                .schema(schema)
+                .build();
 
-    let table = catalog
-        .create_table(&namespace, table_creation)
-        .await
-        .context(format!("Failed to create table '{}'", table_name))?;
+            let table = catalog
+                .create_table(&namespace, table_creation)
+                .await
+                .context(format!("Failed to create table '{}'", table_name))?;
 
-    println!("✓ Created table: {}.{}", namespace_name, table_name);
+            println!("✓ Created table: {}.{}", namespace_name, table_name);
+            table
+        }
+    };
 
     let batch = create_sample_data()?;
 
@@ -177,7 +182,9 @@ async fn main() -> Result<()> {
     // Commit data files to table via transaction
     let tx = Transaction::new(&table);
     let action = tx.fast_append().add_data_files(data_files);
-    let tx = action.apply(tx).context("Failed to apply transaction action")?;
+    let tx = action
+        .apply(tx)
+        .context("Failed to apply transaction action")?;
     let table = tx
         .commit(&catalog)
         .await

@@ -1,6 +1,7 @@
 mod arn;
 mod catalog_impl;
 mod client;
+pub mod commit_types;
 mod helpers;
 mod types;
 

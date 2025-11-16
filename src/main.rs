@@ -60,15 +60,18 @@ fn build_schema() -> Result<Schema> {
 }
 
 use arrow::array::Int64Array;
-use arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
 use arrow::record_batch::RecordBatch;
+use iceberg::arrow::schema_to_arrow_schema;
 use std::sync::Arc;
 
 /// Create sample data: [1, 2, 3]
-fn create_sample_data() -> Result<RecordBatch> {
+/// Uses Iceberg schema converted to Arrow to ensure field IDs are present
+fn create_sample_data(iceberg_schema: &Schema) -> Result<RecordBatch> {
     let id_array = Int64Array::from(vec![1, 2, 3]);
 
-    let arrow_schema = ArrowSchema::new(vec![Field::new("id", DataType::Int64, false)]);
+    // Convert Iceberg schema to Arrow schema - this adds PARQUET:field_id metadata
+    let arrow_schema = schema_to_arrow_schema(iceberg_schema)
+        .context("Failed to convert Iceberg schema to Arrow schema")?;
 
     let batch = RecordBatch::try_new(Arc::new(arrow_schema), vec![Arc::new(id_array)])
         .context("Failed to create record batch")?;
@@ -123,7 +126,7 @@ async fn main() -> Result<()> {
         Err(_) => {
             let table_creation = TableCreation::builder()
                 .name(table_name.clone())
-                .schema(schema)
+                .schema(schema.clone())
                 .build();
 
             let table = catalog
@@ -136,7 +139,7 @@ async fn main() -> Result<()> {
         }
     };
 
-    let batch = create_sample_data()?;
+    let batch = create_sample_data(&schema)?;
 
     // Set up location and file name generators
     let location_generator = DefaultLocationGenerator::new(table.metadata().clone())

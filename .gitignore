@@ -4,3 +4,4 @@
 # Debug files
 **/*.rs.bk
 *.pdb
+.env

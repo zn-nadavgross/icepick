@@ -48,3 +48,11 @@ pub struct UpdateTableRequest {
 }
 
 pub type UpdateTableResponse = CreateTableResponse;
+
+#[derive(Deserialize, Debug)]
+pub struct ConfigResponse {
+    #[serde(default)]
+    pub defaults: HashMap<String, String>,
+    #[serde(default)]
+    pub overrides: HashMap<String, String>,
+}

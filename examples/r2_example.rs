@@ -1,4 +1,4 @@
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result};
 use futures::stream::StreamExt;
 use hello_world_iceberg::catalog::IcebergRestCatalog;
 use iceberg::spec::{DataFileFormat, NestedField, PrimitiveType, Schema, Type};
@@ -13,15 +13,26 @@ use iceberg::NamespaceIdent;
 use iceberg::{Catalog, TableCreation};
 use parquet::file::properties::WriterProperties;
 
-/// Create R2 Data Catalog with Bearer token authentication
-async fn create_r2_catalog(
-    account_id: &str,
-    bucket_name: &str,
-    api_token: &str,
-) -> Result<IcebergRestCatalog> {
-    let catalog = IcebergRestCatalog::from_r2("r2".to_string(), account_id, bucket_name, api_token)
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to create R2 catalog: {}", e))?;
+/// Create R2 Data Catalog with Bearer token authentication from .env
+async fn create_r2_catalog_from_env() -> Result<IcebergRestCatalog> {
+    // Load .env file
+    dotenvy::dotenv().ok();
+
+    let catalog_uri = std::env::var("CLOUDFLARE_CATALOG_URI")
+        .context("CLOUDFLARE_CATALOG_URI not found in environment")?;
+    let warehouse_name = std::env::var("CLOUDFLARE_WAREHOUSE_NAME")
+        .context("CLOUDFLARE_WAREHOUSE_NAME not found in environment")?;
+    let api_token = std::env::var("CLOUDFLARE_API_TOKEN")
+        .context("CLOUDFLARE_API_TOKEN not found in environment")?;
+
+    let catalog = IcebergRestCatalog::from_catalog_uri(
+        "r2".to_string(),
+        catalog_uri,
+        warehouse_name,
+        api_token,
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("Failed to create R2 catalog: {}", e))?;
 
     Ok(catalog)
 }
@@ -71,20 +82,24 @@ fn print_batch(batch: &RecordBatch) -> Result<()> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Load .env file early for all environment variables
+    dotenvy::dotenv().ok();
+
     let args: Vec<String> = std::env::args().collect();
-    ensure!(
-        args.len() == 6,
-        "Usage: {} <account-id> <bucket-name> <api-token> <namespace> <table-name>",
-        args[0]
-    );
+    let (namespace_name, table_name) = if args.len() == 3 {
+        // Command line arguments provided
+        (args[1].clone(), args[2].clone())
+    } else {
+        // Use defaults or environment variables
+        let namespace =
+            std::env::var("CLOUDFLARE_NAMESPACE").unwrap_or_else(|_| "default".to_string());
+        let table = std::env::var("CLOUDFLARE_TABLE").unwrap_or_else(|_| "test_table".to_string());
+        println!("Usage: {} <namespace> <table-name>", args[0]);
+        println!("Using defaults: namespace={}, table={}", namespace, table);
+        (namespace, table)
+    };
 
-    let account_id = &args[1];
-    let bucket_name = &args[2];
-    let api_token = &args[3];
-    let namespace_name = &args[4];
-    let table_name = &args[5];
-
-    let catalog = create_r2_catalog(account_id, bucket_name, api_token)
+    let catalog = create_r2_catalog_from_env()
         .await
         .context("Failed to connect to R2 Data Catalog")?;
 
@@ -92,28 +107,39 @@ async fn main() -> Result<()> {
 
     let namespace = NamespaceIdent::new(namespace_name.clone());
 
-    // Try to create namespace (may already exist)
+    // Cloudflare R2 requires explicit namespace creation
+    // Try to create the namespace
+    println!("Creating namespace: {}", namespace_name);
     match catalog
         .create_namespace(&namespace, Default::default())
         .await
     {
         Ok(_) => println!("✓ Created namespace: {}", namespace_name),
-        Err(e) if e.to_string().contains("Conflict") => {
-            println!("ℹ Using existing namespace: {}", namespace_name)
+        Err(e) if e.to_string().contains("lready exists") || e.to_string().contains("Conflict") => {
+            println!("ℹ Namespace already exists: {}", namespace_name)
         }
-        Err(e) => return Err(anyhow::anyhow!("Failed to create namespace: {}", e)),
+        Err(e) => {
+            eprintln!("Warning: Failed to create namespace: {}", e);
+            println!("ℹ Attempting to continue with existing namespace");
+        }
     }
 
     let schema = build_schema()?;
 
     // Try to load the table first, create if it doesn't exist
     let table_ident = iceberg::TableIdent::new(namespace.clone(), table_name.clone());
+
+    println!(
+        "Attempting to load table: {}.{}",
+        namespace_name, table_name
+    );
     let table = match catalog.load_table(&table_ident).await {
         Ok(table) => {
             println!("✓ Loaded existing table: {}.{}", namespace_name, table_name);
             table
         }
-        Err(_) => {
+        Err(load_err) => {
+            println!("Table not found, attempting to create: {}", load_err);
             let table_creation = TableCreation::builder()
                 .name(table_name.clone())
                 .schema(schema.clone())
@@ -122,7 +148,10 @@ async fn main() -> Result<()> {
             let table = catalog
                 .create_table(&namespace, table_creation)
                 .await
-                .context(format!("Failed to create table '{}'", table_name))?;
+                .context(format!(
+                    "Failed to create table '{}'. Load error: {}. Create error",
+                    table_name, load_err
+                ))?;
 
             println!("✓ Created table: {}.{}", namespace_name, table_name);
             table

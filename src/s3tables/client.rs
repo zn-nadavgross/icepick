@@ -73,6 +73,9 @@ struct CreateTableResponse {
     metadata_location: String,
 }
 
+// LoadTableResponse has same structure as CreateTableResponse
+type LoadTableResponse = CreateTableResponse;
+
 pub struct S3TablesClient {
     endpoint: String,
     warehouse: String,
@@ -172,6 +175,31 @@ impl S3TablesClient {
         let json_value = self.handle_response(response).await?;
 
         let table_response: CreateTableResponse = serde_json::from_value(json_value)
+            .map_err(|e| S3TablesError::Unexpected(format!("Failed to parse table response: {}", e)))?;
+
+        Ok(table_response.metadata)
+    }
+
+    pub async fn load_table(
+        &self,
+        namespace: &str,
+        table_name: &str,
+    ) -> Result<TableMetadata> {
+        let url = format!(
+            "{}/v1/namespaces/{}/tables/{}",
+            self.endpoint, namespace, table_name
+        );
+
+        let req = self.http_client
+            .get(&url)
+            .header("Accept", "application/json")
+            .build()
+            .map_err(|e| S3TablesError::HttpError(format!("Failed to build request: {}", e)))?;
+
+        let response = self.send_signed_request(req).await?;
+        let json_value = self.handle_response(response).await?;
+
+        let table_response: LoadTableResponse = serde_json::from_value(json_value)
             .map_err(|e| S3TablesError::Unexpected(format!("Failed to parse table response: {}", e)))?;
 
         Ok(table_response.metadata)

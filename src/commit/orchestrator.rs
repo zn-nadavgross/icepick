@@ -8,7 +8,6 @@ use crate::transaction::{Transaction, TransactionOperation};
 use uuid::Uuid;
 
 /// Try to commit once (no retries)
-#[allow(dead_code)]
 pub async fn try_commit(transaction: &Transaction<'_>) -> Result<()> {
     let table = transaction.table();
     let metadata = table.metadata();
@@ -97,7 +96,8 @@ pub async fn try_commit(transaction: &Transaction<'_>) -> Result<()> {
 }
 
 /// Commit a transaction with automatic retry on concurrent modification
-#[allow(dead_code)]
-pub async fn commit_transaction(_transaction: Transaction<'_>) -> Result<()> {
-    todo!("Implement commit orchestration")
+pub async fn commit_transaction(transaction: Transaction<'_>) -> Result<()> {
+    // For now, just call try_commit directly
+    // Phase 8 will add retry logic with exponential backoff
+    try_commit(&transaction).await
 }

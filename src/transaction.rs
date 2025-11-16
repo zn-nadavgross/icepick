@@ -50,6 +50,6 @@ impl<'a> Transaction<'a> {
 
     /// Commit the transaction, writing snapshots to the catalog
     pub async fn commit(self) -> crate::error::Result<()> {
-        todo!("Implement commit")
+        crate::commit::orchestrator::commit_transaction(self).await
     }
 }

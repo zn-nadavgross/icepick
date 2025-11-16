@@ -8,14 +8,12 @@ use iceberg::writer::file_writer::location_generator::{
 use iceberg::writer::file_writer::ParquetWriterBuilder;
 use iceberg::writer::{IcebergWriter, IcebergWriterBuilder};
 use iceberg::NamespaceIdent;
-use iceberg::{Catalog, CatalogBuilder, TableCreation};
-use iceberg_catalog_rest::{
-    RestCatalog, RestCatalogBuilder, REST_CATALOG_PROP_URI, REST_CATALOG_PROP_WAREHOUSE,
-};
+use iceberg::{Catalog, TableCreation};
 use parquet::file::properties::WriterProperties;
 use std::collections::HashMap;
 
 mod s3tables;
+use s3tables::S3TablesCatalog;
 
 /// Parse S3 Tables ARN and extract region and bucket name
 /// ARN format: arn:aws:s3tables:region:account:bucket/name
@@ -37,29 +35,11 @@ fn parse_s3_tables_arn(arn: &str) -> Result<(String, String)> {
     Ok((region, bucket_name))
 }
 
-/// Create REST catalog configured for S3 Tables
-///
-/// NOTE: This currently fails with 403 authentication errors because:
-/// - AWS S3 Tables requires SigV4 signing on all REST API requests
-/// - rust-iceberg REST catalog (v0.7.0) does not support SigV4 signing
-/// - RestCatalogBuilder.with_client() accepts only reqwest::Client (no middleware support)
-/// - reqwest::Client does not have request interceptor hooks
-///
-/// To make this work, rust-iceberg would need to:
-/// 1. Accept ClientWithMiddleware from reqwest-middleware, OR
-/// 2. Add built-in SigV4 support like Java's RESTSigV4Signer, OR
-/// 3. Add request interceptor hooks to the REST catalog
-async fn create_s3_tables_catalog(arn: &str, region: &str) -> Result<RestCatalog> {
-    let rest_uri = format!("https://s3tables.{}.amazonaws.com/iceberg", region);
-
-    let mut props = HashMap::new();
-    props.insert(REST_CATALOG_PROP_URI.to_string(), rest_uri);
-    props.insert(REST_CATALOG_PROP_WAREHOUSE.to_string(), arn.to_string());
-
-    let catalog = RestCatalogBuilder::default()
-        .load("s3tables", props)
+/// Create S3 Tables catalog with SigV4 authentication
+async fn create_s3_tables_catalog(arn: &str) -> Result<S3TablesCatalog> {
+    let catalog = S3TablesCatalog::from_arn("s3tables".to_string(), arn)
         .await
-        .context("Failed to create REST catalog")?;
+        .map_err(|e| anyhow::anyhow!("Failed to create S3 Tables catalog: {}", e))?;
 
     Ok(catalog)
 }
@@ -117,9 +97,9 @@ async fn main() -> Result<()> {
     let namespace_name = &args[2];
     let table_name = &args[3];
 
-    let (region, _bucket) = parse_s3_tables_arn(arn)?;
+    let (_region, _bucket) = parse_s3_tables_arn(arn)?;
 
-    let catalog = create_s3_tables_catalog(arn, &region)
+    let catalog = create_s3_tables_catalog(arn)
         .await
         .context("Failed to connect to S3 Tables catalog")?;
 

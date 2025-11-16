@@ -10,6 +10,7 @@ Why not use [iceberg-rust](https://github.com/apache/iceberg-rust)? This project
 
 - **AWS S3 Tables** - Full support with SigV4 authentication (native platforms only)
 - **Cloudflare R2 Data Catalog** - Full support with bearer token auth (WASM-compatible)
+- **Direct S3 Parquet Writes** - Write Arrow data directly to S3 without Iceberg metadata
 - **Clean API** - Simple factory methods, no complex builders
 - **Type-safe errors** - Comprehensive error handling with context
 - **Zero-config auth** - Uses AWS credential chain and Cloudflare API tokens
@@ -101,6 +102,63 @@ Uses Cloudflare API tokens:
 2. Go to "My Profile" → "API Tokens"
 3. Create a token with R2 read/write permissions
 4. Pass the token when constructing the catalog
+
+## Direct S3 Parquet Writes
+
+Need to write Parquet files directly to S3 for external tools (Spark, DuckDB, etc.) without Iceberg metadata? Use the `arrow_to_parquet` function:
+
+```rust
+use icepick::{arrow_to_parquet, FileIO, io::AwsCredentials};
+use arrow::array::{Int32Array, StringArray};
+use arrow::datatypes::{DataType, Field, Schema};
+use arrow::record_batch::RecordBatch;
+use parquet::basic::Compression;
+use std::sync::Arc;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Setup FileIO with AWS credentials
+    let file_io = FileIO::from_aws_credentials(
+        AwsCredentials {
+            access_key_id: "your-key".to_string(),
+            secret_access_key: "your-secret".to_string(),
+            session_token: None,
+        },
+        "us-west-2".to_string()
+    );
+
+    // Create Arrow data
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(Int32Array::from(vec![1, 2, 3])),
+            Arc::new(StringArray::from(vec!["a", "b", "c"])),
+        ],
+    )?;
+
+    // Simple write with defaults
+    arrow_to_parquet(&batch, "s3://my-bucket/output.parquet", &file_io).await?;
+
+    // With compression
+    arrow_to_parquet(&batch, "s3://my-bucket/compressed.parquet", &file_io)
+        .with_compression(Compression::ZSTD(parquet::basic::ZstdLevel::default()))
+        .await?;
+
+    // Manual partitioning (Hive-style or any structure)
+    let date = "2025-01-15";
+    let path = format!("s3://my-bucket/data/date={}/data.parquet", date);
+    arrow_to_parquet(&batch, &path, &file_io).await?;
+
+    Ok(())
+}
+```
+
+**Note:** This writes standalone Parquet files without Iceberg metadata. For writing to Iceberg tables, use the `Transaction` API instead.
 
 ## Examples
 

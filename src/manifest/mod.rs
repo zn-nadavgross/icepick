@@ -1,4 +1,13 @@
 //! Iceberg manifest file handling
+//!
+//! Manifests are Avro files that track data files in an Iceberg table.
+//! Each snapshot has a manifest list (Avro) that references one or more
+//! manifest files (Avro), which contain data file metadata.
+//!
+//! This module provides:
+//! - Avro schema definitions for v2 format
+//! - Conversion from Iceberg types to Avro values
+//! - Writers for manifest and manifest list files
 
 pub mod avro;
 pub mod schema;

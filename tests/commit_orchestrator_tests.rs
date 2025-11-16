@@ -48,6 +48,6 @@ async fn test_try_commit_first_snapshot() {
     let transaction = table.transaction().append(vec![data_file]);
 
     // This will fail until we implement try_commit
-    let result = icepick::commit::orchestrator::try_commit(&transaction).await;
+    let result = icepick::commit::try_commit(&transaction).await;
     assert!(result.is_ok());
 }

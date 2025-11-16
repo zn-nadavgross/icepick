@@ -148,7 +148,7 @@ impl IcebergRestCatalog {
             .map_err(|e| CatalogError::AuthError(format!("Failed to load credentials: {}", e)))?;
 
         let auth = Box::new(crate::catalog::SigV4AuthProvider::new(
-            region,
+            region.clone(),
             "s3tables".to_string(),
             credentials,
         ));
@@ -157,7 +157,7 @@ impl IcebergRestCatalog {
 
         // Create FileIO for S3 access using opendal
         let s3_config = vec![
-            ("region".to_string(), region.clone()),
+            ("region".to_string(), region),
         ];
 
         let operator = opendal::Operator::via_iter(opendal::Scheme::S3, s3_config)

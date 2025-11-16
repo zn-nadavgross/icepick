@@ -4,10 +4,11 @@
 //! This catalog uses AWS SigV4 authentication and is only available on non-WASM platforms.
 
 use crate::catalog::rest::IcebergRestCatalog;
+use crate::catalog::Catalog;
 use crate::error::{Error, Result};
+use crate::spec::{NamespaceIdent, TableCreation, TableIdent};
+use crate::table::Table;
 use async_trait::async_trait;
-use iceberg::table::Table;
-use iceberg::{Catalog, Namespace, NamespaceIdent, TableCommit, TableCreation, TableIdent};
 use std::collections::HashMap;
 
 /// AWS S3 Tables catalog
@@ -106,79 +107,51 @@ impl S3TablesCatalog {
 // Implement Catalog trait by delegating to inner IcebergRestCatalog
 #[async_trait]
 impl Catalog for S3TablesCatalog {
-    async fn list_namespaces(
-        &self,
-        parent: Option<&NamespaceIdent>,
-    ) -> iceberg::Result<Vec<NamespaceIdent>> {
-        self.inner.list_namespaces(parent).await
-    }
-
     async fn create_namespace(
         &self,
         namespace: &NamespaceIdent,
         properties: HashMap<String, String>,
-    ) -> iceberg::Result<Namespace> {
+    ) -> Result<()> {
         self.inner.create_namespace(namespace, properties).await
     }
 
-    async fn get_namespace(&self, namespace: &NamespaceIdent) -> iceberg::Result<Namespace> {
-        self.inner.get_namespace(namespace).await
-    }
-
-    async fn namespace_exists(&self, namespace: &NamespaceIdent) -> iceberg::Result<bool> {
+    async fn namespace_exists(&self, namespace: &NamespaceIdent) -> Result<bool> {
         self.inner.namespace_exists(namespace).await
     }
 
-    async fn update_namespace(
-        &self,
-        namespace: &NamespaceIdent,
-        properties: HashMap<String, String>,
-    ) -> iceberg::Result<()> {
-        self.inner.update_namespace(namespace, properties).await
-    }
-
-    async fn drop_namespace(&self, namespace: &NamespaceIdent) -> iceberg::Result<()> {
-        self.inner.drop_namespace(namespace).await
-    }
-
-    async fn list_tables(&self, namespace: &NamespaceIdent) -> iceberg::Result<Vec<TableIdent>> {
+    async fn list_tables(&self, namespace: &NamespaceIdent) -> Result<Vec<TableIdent>> {
         self.inner.list_tables(namespace).await
+    }
+
+    async fn table_exists(&self, identifier: &TableIdent) -> Result<bool> {
+        self.inner.table_exists(identifier).await
     }
 
     async fn create_table(
         &self,
         namespace: &NamespaceIdent,
         creation: TableCreation,
-    ) -> iceberg::Result<Table> {
+    ) -> Result<Table> {
         self.inner.create_table(namespace, creation).await
     }
 
-    async fn load_table(&self, table: &TableIdent) -> iceberg::Result<Table> {
-        self.inner.load_table(table).await
+    async fn load_table(&self, identifier: &TableIdent) -> Result<Table> {
+        self.inner.load_table(identifier).await
     }
 
-    async fn drop_table(&self, table: &TableIdent) -> iceberg::Result<()> {
-        self.inner.drop_table(table).await
+    async fn drop_table(&self, identifier: &TableIdent) -> Result<()> {
+        self.inner.drop_table(identifier).await
     }
 
-    async fn table_exists(&self, table: &TableIdent) -> iceberg::Result<bool> {
-        self.inner.table_exists(table).await
-    }
-
-    async fn rename_table(&self, src: &TableIdent, dest: &TableIdent) -> iceberg::Result<()> {
-        self.inner.rename_table(src, dest).await
-    }
-
-    async fn register_table(
+    async fn update_table_metadata(
         &self,
-        table: &TableIdent,
-        metadata_location: String,
-    ) -> iceberg::Result<Table> {
-        self.inner.register_table(table, metadata_location).await
-    }
-
-    async fn update_table(&self, commit: TableCommit) -> iceberg::Result<Table> {
-        self.inner.update_table(commit).await
+        identifier: &TableIdent,
+        old_metadata_location: &str,
+        new_metadata_location: &str,
+    ) -> Result<()> {
+        self.inner
+            .update_table_metadata(identifier, old_metadata_location, new_metadata_location)
+            .await
     }
 }
 

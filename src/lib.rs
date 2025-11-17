@@ -75,6 +75,7 @@ pub use writer::arrow_to_parquet;
 
 // Re-export catalog types
 pub use catalog::r2::R2Catalog;
+pub use catalog::{RestAuthProvider, RestCatalog, RestCatalogBuilder};
 
 #[cfg(not(target_family = "wasm"))]
 pub use catalog::s3_tables::S3TablesCatalog;

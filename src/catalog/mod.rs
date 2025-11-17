@@ -4,6 +4,7 @@ mod auth;
 mod options;
 pub mod r2;
 pub(crate) mod rest;
+pub mod rest_catalog;
 
 #[cfg(not(target_family = "wasm"))]
 pub mod s3_tables;
@@ -13,13 +14,15 @@ mod catalog_trait;
 
 pub use catalog_trait::Catalog;
 pub use options::{CatalogOptions, HttpClientConfig};
+pub use rest_catalog::{RestAuthProvider, RestCatalog, RestCatalogBuilder};
 
 // Make auth providers internal - not part of public API
-pub(crate) use auth::BearerTokenAuthProvider;
+pub use auth::BearerTokenAuthProvider;
 
 #[cfg(not(target_family = "wasm"))]
-pub(crate) use auth::SigV4AuthProvider;
+pub use auth::SigV4AuthProvider;
 
+use crate::error::Error;
 use async_trait::async_trait;
 
 /// Result type for catalog operations (internal)
@@ -71,4 +74,19 @@ pub(crate) struct R2Config {
 pub(crate) trait AuthProvider: Send + Sync + std::fmt::Debug {
     /// Sign or authenticate an HTTP request
     async fn sign_request(&self, request: reqwest::Request) -> Result<reqwest::Request>;
+}
+
+pub(crate) fn map_catalog_error(err: CatalogError) -> Error {
+    match err {
+        CatalogError::NotFound(resource) => Error::not_found(resource),
+        CatalogError::Conflict(message) => Error::conflict(message),
+        CatalogError::InvalidRequest(message) => Error::invalid_request(message),
+        CatalogError::AuthError(provider) => Error::unauthorized(provider),
+        CatalogError::HttpError(message) => Error::unexpected(message),
+        CatalogError::ServerError { status, message } => Error::server_error(status, message),
+        CatalogError::Network(source) => Error::NetworkError { source },
+        #[cfg(not(target_family = "wasm"))]
+        CatalogError::InvalidArn(arn) => Error::invalid_arn(arn),
+        CatalogError::Unexpected(message) => Error::unexpected(message),
+    }
 }

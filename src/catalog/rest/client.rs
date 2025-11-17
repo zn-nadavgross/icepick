@@ -20,6 +20,28 @@ use aws_credential_types::provider::ProvideCredentials;
 use percent_encoding::utf8_percent_encode;
 
 impl IcebergRestCatalog {
+    /// Create a generic Iceberg REST catalog from preconfigured components.
+    pub(crate) fn from_components(
+        name: String,
+        endpoint: impl Into<String>,
+        prefix: impl Into<String>,
+        auth_provider: Box<dyn AuthProvider>,
+        file_io: FileIO,
+        options: CatalogOptions,
+    ) -> Result<Self> {
+        let http_client = build_http_client(options.http())?;
+
+        Ok(Self {
+            endpoint: endpoint.into(),
+            prefix: prefix.into(),
+            http_client,
+            auth_provider,
+            file_io,
+            name,
+            options,
+        })
+    }
+
     /// Create catalog for Cloudflare R2 Data Catalog (shortcut)
     pub async fn from_r2(
         name: String,

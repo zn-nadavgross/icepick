@@ -357,9 +357,10 @@ impl IcebergRestCatalog {
                 let is_unsupported = match &err {
                     crate::catalog::CatalogError::InvalidRequest(ref msg)
                     | crate::catalog::CatalogError::Unexpected(ref msg) => {
-                        msg.contains("unsupported_table_update")
-                            || msg.contains("unknown variant `set-current-table-metadata`")
-                            || msg.contains("set-current-table-metadata")
+                        contains_metadata_error(msg)
+                    }
+                    crate::catalog::CatalogError::ServerError { message, .. } => {
+                        contains_metadata_error(message)
                     }
                     _ => false,
                 };
@@ -421,4 +422,11 @@ impl IcebergRestCatalog {
             .map_err(helpers::from_catalog_error)?;
         Ok(())
     }
+}
+
+fn contains_metadata_error(message: &str) -> bool {
+    message.contains("unsupported_table_update")
+        || message.contains("unknown variant `set-current-table-metadata`")
+        || message.contains("type id 'set-current-table-metadata'")
+        || message.contains("set-current-table-metadata")
 }

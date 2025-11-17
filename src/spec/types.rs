@@ -1,11 +1,13 @@
 //! Iceberg data types
 //! Vendored from iceberg-rust v0.7.0
 
-use serde::{Deserialize, Serialize};
+use serde::de::{self, MapAccess, Visitor};
+use serde::ser::SerializeStruct;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::fmt;
 
 /// Primitive data types in Iceberg
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PrimitiveType {
     /// True or false
     Boolean,
@@ -40,6 +42,154 @@ pub enum PrimitiveType {
     Fixed(u64),
     /// Variable-length byte array
     Binary,
+}
+
+impl Serialize for PrimitiveType {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            PrimitiveType::Boolean => serializer.serialize_str("boolean"),
+            PrimitiveType::Int => serializer.serialize_str("int"),
+            PrimitiveType::Long => serializer.serialize_str("long"),
+            PrimitiveType::Float => serializer.serialize_str("float"),
+            PrimitiveType::Double => serializer.serialize_str("double"),
+            PrimitiveType::Decimal { precision, scale } => {
+                let mut state = serializer.serialize_struct("DecimalType", 3)?;
+                state.serialize_field("type", "decimal")?;
+                state.serialize_field("precision", precision)?;
+                state.serialize_field("scale", scale)?;
+                state.end()
+            }
+            PrimitiveType::Date => serializer.serialize_str("date"),
+            PrimitiveType::Time => serializer.serialize_str("time"),
+            PrimitiveType::Timestamp => serializer.serialize_str("timestamp"),
+            PrimitiveType::Timestamptz => serializer.serialize_str("timestamptz"),
+            PrimitiveType::String => serializer.serialize_str("string"),
+            PrimitiveType::Uuid => serializer.serialize_str("uuid"),
+            PrimitiveType::Fixed(length) => {
+                let mut state = serializer.serialize_struct("FixedType", 2)?;
+                state.serialize_field("type", "fixed")?;
+                state.serialize_field("length", length)?;
+                state.end()
+            }
+            PrimitiveType::Binary => serializer.serialize_str("binary"),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for PrimitiveType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct PrimitiveVisitor;
+
+        impl<'de> Visitor<'de> for PrimitiveVisitor {
+            type Value = PrimitiveType;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("an Iceberg primitive type")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                match value {
+                    "boolean" => Ok(PrimitiveType::Boolean),
+                    "int" => Ok(PrimitiveType::Int),
+                    "long" => Ok(PrimitiveType::Long),
+                    "float" => Ok(PrimitiveType::Float),
+                    "double" => Ok(PrimitiveType::Double),
+                    "date" => Ok(PrimitiveType::Date),
+                    "time" => Ok(PrimitiveType::Time),
+                    "timestamp" => Ok(PrimitiveType::Timestamp),
+                    "timestamptz" => Ok(PrimitiveType::Timestamptz),
+                    "string" => Ok(PrimitiveType::String),
+                    "uuid" => Ok(PrimitiveType::Uuid),
+                    "binary" => Ok(PrimitiveType::Binary),
+                    _ => Err(E::unknown_variant(
+                        value,
+                        &[
+                            "boolean",
+                            "int",
+                            "long",
+                            "float",
+                            "double",
+                            "date",
+                            "time",
+                            "timestamp",
+                            "timestamptz",
+                            "string",
+                            "uuid",
+                            "binary",
+                        ],
+                    )),
+                }
+            }
+
+            fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+            where
+                M: MapAccess<'de>,
+            {
+                let mut ty: Option<String> = None;
+                let mut length: Option<u64> = None;
+                let mut precision: Option<u32> = None;
+                let mut scale: Option<u32> = None;
+
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "type" => {
+                            if ty.is_some() {
+                                return Err(de::Error::duplicate_field("type"));
+                            }
+                            ty = Some(map.next_value()?);
+                        }
+                        "length" => {
+                            if length.is_some() {
+                                return Err(de::Error::duplicate_field("length"));
+                            }
+                            length = Some(map.next_value()?);
+                        }
+                        "precision" => {
+                            if precision.is_some() {
+                                return Err(de::Error::duplicate_field("precision"));
+                            }
+                            precision = Some(map.next_value()?);
+                        }
+                        "scale" => {
+                            if scale.is_some() {
+                                return Err(de::Error::duplicate_field("scale"));
+                            }
+                            scale = Some(map.next_value()?);
+                        }
+                        _ => {
+                            let _ = map.next_value::<de::IgnoredAny>()?;
+                        }
+                    }
+                }
+
+                let ty = ty.ok_or_else(|| de::Error::missing_field("type"))?;
+                match ty.as_str() {
+                    "fixed" => {
+                        let length = length.ok_or_else(|| de::Error::missing_field("length"))?;
+                        Ok(PrimitiveType::Fixed(length))
+                    }
+                    "decimal" => {
+                        let precision =
+                            precision.ok_or_else(|| de::Error::missing_field("precision"))?;
+                        let scale = scale.ok_or_else(|| de::Error::missing_field("scale"))?;
+                        Ok(PrimitiveType::Decimal { precision, scale })
+                    }
+                    other => Err(de::Error::unknown_variant(other, &["fixed", "decimal"])),
+                }
+            }
+        }
+
+        deserializer.deserialize_any(PrimitiveVisitor)
+    }
 }
 
 /// Iceberg type - either primitive or nested
@@ -223,6 +373,51 @@ mod tests {
         assert!(json.get("value-id").is_some());
         assert!(json.get("value-required").is_some());
         assert!(json.get("value").is_some());
+    }
+
+    #[test]
+    fn primitive_string_serializes_as_str() {
+        let json = serde_json::to_value(Type::Primitive(PrimitiveType::String)).unwrap();
+        assert_eq!(json, serde_json::Value::String("string".to_string()));
+    }
+
+    #[test]
+    fn primitive_fixed_serializes_with_type() {
+        let json = serde_json::to_value(Type::Primitive(PrimitiveType::Fixed(16))).unwrap();
+        assert_eq!(get_type_field(&json), Some("fixed"));
+        assert_eq!(json.get("length").and_then(|v| v.as_u64()), Some(16));
+    }
+
+    #[test]
+    fn primitive_decimal_serializes_with_type() {
+        let json = serde_json::to_value(Type::Primitive(PrimitiveType::Decimal {
+            precision: 10,
+            scale: 2,
+        }))
+        .unwrap();
+        assert_eq!(get_type_field(&json), Some("decimal"));
+        assert_eq!(json.get("precision").and_then(|v| v.as_u64()), Some(10));
+        assert_eq!(json.get("scale").and_then(|v| v.as_u64()), Some(2));
+    }
+
+    #[test]
+    fn primitive_fixed_deserializes_from_spec_json() {
+        let value = serde_json::json!({"type": "fixed", "length": 4});
+        let ty: Type = serde_json::from_value(value).unwrap();
+        assert!(matches!(ty, Type::Primitive(PrimitiveType::Fixed(4))));
+    }
+
+    #[test]
+    fn primitive_decimal_deserializes_from_spec_json() {
+        let value = serde_json::json!({"type": "decimal", "precision": 5, "scale": 3});
+        let ty: Type = serde_json::from_value(value).unwrap();
+        assert!(matches!(
+            ty,
+            Type::Primitive(PrimitiveType::Decimal {
+                precision: 5,
+                scale: 3
+            })
+        ));
     }
 }
 

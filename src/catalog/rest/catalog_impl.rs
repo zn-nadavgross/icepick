@@ -284,8 +284,15 @@ impl IcebergRestCatalog {
             }],
         };
 
-        // 4. Send to REST endpoint, with fallback for catalogs that don't support metadata CAS
-        // TODO: We should just make commit_table opt-in given lots of the catalogs we use don't support it (R2, S3, Nessie)
+        // We use snapshot commit because it's needed for S3 Tables and R2 Catalog
+        // as of November 2025
+        if !commit_table_enabled() {
+            return self
+                .legacy_snapshot_commit(identifier, snapshot_id_requirement, new_metadata)
+                .await;
+        }
+
+        // This is the "preferred API" but not well-supported by R2 Catalog, S3 Tables or Nessie
         match self.commit_table(identifier, request).await {
             Ok(_) => Ok(()),
             Err(err) => {
@@ -398,4 +405,25 @@ fn contains_metadata_error(message: &str) -> bool {
         || message.contains("unknown variant `set-current-table-metadata`")
         || message.contains("type id 'set-current-table-metadata'")
         || message.contains("set-current-table-metadata")
+}
+
+const COMMIT_TABLE_ENV: &str = "ICEPICK_USE_COMMIT_TABLE";
+
+#[cfg(target_family = "wasm")]
+fn commit_table_enabled() -> bool {
+    false
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn commit_table_enabled() -> bool {
+    match std::env::var(COMMIT_TABLE_ENV) {
+        Ok(value) => {
+            let normalized = value.trim().to_ascii_lowercase();
+            matches!(
+                normalized.as_str(),
+                "1" | "true" | "yes" | "on" | "enable" | "enabled"
+            )
+        }
+        Err(_) => false,
+    }
 }

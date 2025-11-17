@@ -187,6 +187,7 @@ impl FileIO {
         operator
             .write(normalized, data)
             .await
+            .map(|_| ()) // Discard Metadata return value
             .map_err(|e| Error::IoError(format!("Failed to write {}: {}", path, e)))
     }
 

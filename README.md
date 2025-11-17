@@ -1,29 +1,42 @@
 # icepick
 
-**Experimental client for Apache Iceberg in Rust**
+[![Crates.io](https://img.shields.io/crates/v/icepick.svg)](https://crates.io/crates/icepick)
+[![Documentation](https://docs.rs/icepick/badge.svg)](https://docs.rs/icepick)
+[![License](https://img.shields.io/crates/l/icepick.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-2021%2B-blue.svg)](https://www.rust-lang.org)
 
-icepick provides simple access to Apache Iceberg tables in AWS S3 Tables and Cloudflare R2 Data Catalog. Built on the official [iceberg-rust](https://github.com/apache/iceberg-rust) library, Icepick handles authentication, REST API details, and platform compatibility so you can focus on working with your data.
+> **Experimental client for Apache Iceberg in Rust**
 
-Why not use [iceberg-rust](https://github.com/apache/iceberg-rust)? This project targets wasm as a compliation target (not supported yet in `iceberg-rust`) and is focused on "serverless" catalogs that implement a subset of the overall Iceberg specification.
+**icepick** provides simple access to Apache Iceberg tables in AWS S3 Tables and Cloudflare R2 Data Catalog. Built on the official [iceberg-rust](https://github.com/apache/iceberg-rust) library, icepick handles authentication, REST API details, and platform compatibility so you can focus on working with your data.
+
+---
+
+### Why icepick?
+
+**Why not use [iceberg-rust](https://github.com/apache/iceberg-rust)?** This project targets WASM as a compilation target (not yet supported in `iceberg-rust`) and focuses on "serverless" catalogs that implement a subset of the overall Iceberg specification.
 
 ## Features
 
-- **AWS S3 Tables** - Full support with SigV4 authentication (native platforms only)
-- **Cloudflare R2 Data Catalog** - Full support with bearer token auth (WASM-compatible)
-- **Direct S3 Parquet Writes** - Write Arrow data directly to S3 without Iceberg metadata
-- **Clean API** - Simple factory methods, no complex builders
-- **Type-safe errors** - Comprehensive error handling with context
-- **Zero-config auth** - Uses AWS credential chain and Cloudflare API tokens
-- **Production-ready** - Used in real applications with real data
+### Catalog Support
+- **AWS S3 Tables** — Full support with SigV4 authentication (native platforms only)
+- **Cloudflare R2 Data Catalog** — Full support with bearer token auth (WASM-compatible)
+- **Direct S3 Parquet Writes** — Write Arrow data directly to S3 without Iceberg metadata
+
+### Developer Experience
+- **Clean API** — Simple factory methods, no complex builders
+- **Type-safe errors** — Comprehensive error handling with context
+- **Zero-config auth** — Uses AWS credential chain and Cloudflare API tokens
+- **Production-ready** — Used in real applications with real data
 
 ## Platform Support
 
 | Catalog | Linux/macOS/Windows | WASM (browser/Cloudflare Workers) |
-|---------|---------------------|------------------------|
-| S3 Tables | ✅ | ❌ (requires AWS SDK) |
-| R2 Data Catalog | ✅ | ✅ |
+|---------|---------------------|-----------------------------------|
+| **S3 Tables** | ✅ | ❌ (requires AWS SDK) |
+| **R2 Data Catalog** | ✅ | ✅ |
+| **No Catalog** (direct parquet to object storage) | ✅ | ✅ |
 
-R2Catalog is fully WASM-compatible, making it suitable for Cloudflare Workers, browser applications, and other WASM environments.
+> **Note:** R2 Data Catalog and direct Parquet writes are fully WASM-compatible, making them suitable for Cloudflare Workers, browser applications, and other WASM environments.
 
 ## Installation
 
@@ -86,21 +99,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### AWS S3 Tables
 
-Uses the AWS default credential provider chain:
-- Environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`)
-- AWS credentials file (`~/.aws/credentials`)
-- IAM instance profile (EC2)
-- ECS task role
+Uses the **AWS default credential provider chain** in the following order:
 
-Ensure your credentials have S3 Tables permissions.
+1. Environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`)
+2. AWS credentials file (`~/.aws/credentials`)
+3. IAM instance profile (EC2)
+4. ECS task role
+
+> **Important:** Ensure your credentials have S3 Tables permissions.
 
 ### Cloudflare R2 Data Catalog
 
-Uses Cloudflare API tokens:
+Uses **Cloudflare API tokens**. To set up:
 
 1. Log into the Cloudflare dashboard
-2. Go to "My Profile" → "API Tokens"
-3. Create a token with R2 read/write permissions
+2. Navigate to **My Profile** → **API Tokens**
+3. Create a token with **R2 read/write permissions**
 4. Pass the token when constructing the catalog
 
 ## Direct S3 Parquet Writes
@@ -162,20 +176,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Examples
 
-See the [`examples/`](examples/) directory:
+Explore complete working examples in the [`examples/`](examples/) directory:
 
-- [`s3_tables_basic.rs`](examples/s3_tables_basic.rs) - Complete S3 Tables workflow
-- [`r2_basic.rs`](examples/r2_basic.rs) - Complete R2 Data Catalog workflow
-
-Run examples:
-
-```bash
-# S3 Tables
-cargo run --example s3_tables_basic
-
-# R2 Data Catalog
-cargo run --example r2_basic
-```
+| Example | Description | Command |
+|---------|-------------|---------|
+| [`s3_tables_basic.rs`](examples/s3_tables_basic.rs) | Complete S3 Tables workflow | `cargo run --example s3_tables_basic` |
+| [`r2_basic.rs`](examples/r2_basic.rs) | Complete R2 Data Catalog workflow | `cargo run --example r2_basic` |
 
 ## Development
 
@@ -193,11 +199,17 @@ Verify R2Catalog compiles for WASM:
 cargo build --target wasm32-unknown-unknown
 ```
 
-### Format and Lint
+### Code Quality
 
 ```bash
+# Format code
 cargo fmt
+
+# Run linter
 cargo clippy -- -D warnings
+
+# Check documentation
+cargo doc --no-deps --all-features
 ```
 
 ## Contributing

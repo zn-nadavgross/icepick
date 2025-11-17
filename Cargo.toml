@@ -2,6 +2,15 @@
 name = "icepick"
 version = "0.1.0"
 edition = "2021"
+authors = ["Clay Smith"]
+description = "Experimental Rust client for Apache Iceberg with WASM support for AWS S3 Tables and Cloudflare R2"
+license = "Apache-2.0"
+repository = "https://github.com/smithclay/icepick"
+homepage = "https://github.com/smithclay/icepick"
+documentation = "https://docs.rs/icepick"
+readme = "README.md"
+keywords = ["iceberg", "parquet", "data", "s3", "wasm"]
+categories = ["database", "web-programming"]
 
 [dependencies]
 # HTTP and serialization

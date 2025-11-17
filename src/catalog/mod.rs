@@ -1,6 +1,7 @@
 //! Iceberg REST catalog implementation with pluggable authentication
 
 mod auth;
+mod options;
 pub mod r2;
 pub(crate) mod rest;
 
@@ -11,6 +12,7 @@ pub mod s3_tables;
 mod catalog_trait;
 
 pub use catalog_trait::Catalog;
+pub use options::{CatalogOptions, HttpClientConfig};
 
 // Make auth providers internal - not part of public API
 pub(crate) use auth::BearerTokenAuthProvider;
@@ -40,6 +42,12 @@ pub(crate) enum CatalogError {
 
     #[error("HTTP error: {0}")]
     HttpError(String),
+
+    #[error("Server error {status}: {message}")]
+    ServerError { status: u16, message: String },
+
+    #[error("Network error: {0}")]
+    Network(reqwest::Error),
 
     #[cfg(not(target_family = "wasm"))]
     #[error("Invalid ARN: {0}")]

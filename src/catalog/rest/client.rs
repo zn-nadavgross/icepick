@@ -3,7 +3,9 @@
 use super::commit_types::{CommitTableRequest, CommitTableResponse};
 use super::types;
 use super::IcebergRestCatalog;
-use crate::catalog::{AuthProvider, CatalogError, R2Config, Result};
+use crate::catalog::{
+    AuthProvider, CatalogError, CatalogOptions, HttpClientConfig, R2Config, Result,
+};
 use crate::io::FileIO;
 use crate::spec::TableIdent;
 use reqwest::Client;
@@ -25,17 +27,38 @@ impl IcebergRestCatalog {
         bucket_name: impl Into<String>,
         api_token: impl Into<String>,
     ) -> Result<Self> {
+        Self::from_r2_with_options(
+            name,
+            account_id,
+            bucket_name,
+            api_token,
+            CatalogOptions::default(),
+        )
+        .await
+    }
+
+    /// Create catalog for Cloudflare R2 Data Catalog with explicit options
+    pub async fn from_r2_with_options(
+        name: String,
+        account_id: impl Into<String>,
+        bucket_name: impl Into<String>,
+        api_token: impl Into<String>,
+        options: CatalogOptions,
+    ) -> Result<Self> {
         let config = R2Config {
             account_id: account_id.into(),
             bucket_name: bucket_name.into(),
             api_token: api_token.into(),
             endpoint_override: None,
         };
-        Self::from_r2_config(name, config).await
+        Self::from_r2_config_with_options(name, config, options).await
     }
 
-    /// Create catalog for Cloudflare R2 Data Catalog (with config)
-    pub async fn from_r2_config(name: String, config: R2Config) -> Result<Self> {
+    pub async fn from_r2_config_with_options(
+        name: String,
+        config: R2Config,
+        options: CatalogOptions,
+    ) -> Result<Self> {
         let endpoint = config.endpoint_override.unwrap_or_else(|| {
             format!(
                 "https://catalog.cloudflarestorage.com/{}/{}",
@@ -46,14 +69,13 @@ impl IcebergRestCatalog {
         let auth = Box::new(crate::catalog::BearerTokenAuthProvider::new(
             config.api_token,
         ));
-        let http_client = Client::new();
+        let http_client = build_http_client(options.http())?;
 
         // Construct warehouse name from account_id and bucket_name
         let warehouse = format!("{}_{}", config.account_id, config.bucket_name);
 
         // Call /v1/config to get server configuration (per Iceberg REST spec)
         let config_url = format!("{}/v1/config?warehouse={}", endpoint, warehouse);
-        eprintln!("DEBUG: Fetching config from URL: {}", config_url);
 
         let req = http_client.get(&config_url).build().map_err(|e| {
             CatalogError::HttpError(format!("Failed to build config request: {}", e))
@@ -61,7 +83,6 @@ impl IcebergRestCatalog {
 
         // Sign the request with auth
         let signed_req = auth.sign_request(req).await?;
-        eprintln!("DEBUG: Config request headers: {:?}", signed_req.headers());
 
         let response = http_client
             .execute(signed_req)
@@ -73,11 +94,6 @@ impl IcebergRestCatalog {
             .text()
             .await
             .unwrap_or_else(|_| "Unable to read response".to_string());
-
-        eprintln!(
-            "DEBUG: Config response status: {}, body: {}",
-            status, body_text
-        );
 
         if !status.is_success() {
             return Err(CatalogError::HttpError(format!(
@@ -98,12 +114,9 @@ impl IcebergRestCatalog {
 
         // Extract prefix from server configuration (defaults to empty string)
         let prefix = properties.get("prefix").cloned().unwrap_or_default();
-        eprintln!("DEBUG: Using prefix from server: '{}'", prefix);
-        eprintln!("DEBUG: Config properties: {:?}", properties);
 
         // Configure FileIO for R2 S3-compatible storage using opendal
         let r2_endpoint = format!("https://{}.r2.cloudflarestorage.com", config.account_id);
-        eprintln!("DEBUG: Setting S3 endpoint to: {}", r2_endpoint);
 
         let mut s3_config_vec = vec![
             ("endpoint".to_string(), r2_endpoint),
@@ -113,7 +126,6 @@ impl IcebergRestCatalog {
         // Apply properties from config response
         for (key, value) in &properties {
             if key.starts_with("s3.") {
-                eprintln!("DEBUG: FileIO property: {}={}", key, value);
                 let opendal_key = key.strip_prefix("s3.").unwrap_or(key).to_string();
                 s3_config_vec.push((opendal_key, value.clone()));
             }
@@ -132,12 +144,22 @@ impl IcebergRestCatalog {
             auth_provider: auth,
             file_io,
             name,
+            options,
         })
     }
 
     /// Create catalog for AWS S3 Tables
     #[cfg(not(target_family = "wasm"))]
     pub async fn from_s3_tables_arn(name: String, arn: &str) -> Result<Self> {
+        Self::from_s3_tables_arn_with_options(name, arn, CatalogOptions::default()).await
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    pub async fn from_s3_tables_arn_with_options(
+        name: String,
+        arn: &str,
+        options: CatalogOptions,
+    ) -> Result<Self> {
         let (region, _bucket_name) = parse_s3tables_arn(arn)?;
         let endpoint = format!("https://s3tables.{}.amazonaws.com/iceberg", region);
 
@@ -159,7 +181,7 @@ impl IcebergRestCatalog {
             credentials.clone(),
         ));
 
-        let http_client = Client::new();
+        let http_client = build_http_client(options.http())?;
 
         // Create FileIO with AWS credentials for multi-bucket support
         // S3 Tables stores data in AWS-managed buckets that may be in different regions
@@ -177,6 +199,7 @@ impl IcebergRestCatalog {
             auth_provider: auth,
             file_io,
             name,
+            options,
         })
     }
 
@@ -189,16 +212,9 @@ impl IcebergRestCatalog {
         let namespace = identifier.namespace().as_ref().join("/");
         let table_name = identifier.name();
 
-        let url = self.url(&format!("namespaces/{}/tables/{}", namespace, table_name));
+        let url = self.table_url(&namespace, table_name, true);
 
         // Diagnostic logging for debugging
-        eprintln!("DEBUG: Commit table URL: {}", url);
-        eprintln!(
-            "DEBUG: Commit request: {}",
-            serde_json::to_string_pretty(&request)
-                .unwrap_or_else(|_| "Failed to serialize".to_string())
-        );
-
         let req = self
             .http_client
             .post(&url)
@@ -207,8 +223,6 @@ impl IcebergRestCatalog {
             .map_err(|e| CatalogError::HttpError(format!("Failed to build request: {}", e)))?;
 
         let response = self.send_request(req).await?;
-
-        eprintln!("DEBUG: Commit response status: {}", response.status());
 
         if response.status().as_u16() == 409 {
             return Err(CatalogError::Conflict(
@@ -224,4 +238,32 @@ impl IcebergRestCatalog {
 
         Ok(commit_response)
     }
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn build_http_client(config: &HttpClientConfig) -> Result<Client> {
+    let mut builder = Client::builder();
+
+    if let Some(timeout) = config.timeout() {
+        builder = builder.timeout(timeout);
+    }
+
+    if let Some(connect_timeout) = config.connect_timeout() {
+        builder = builder.connect_timeout(connect_timeout);
+    }
+
+    if let Some(user_agent) = config.user_agent() {
+        builder = builder.user_agent(user_agent.to_string());
+    }
+
+    builder
+        .build()
+        .map_err(|e| CatalogError::HttpError(format!("Failed to build HTTP client: {}", e)))
+}
+
+#[cfg(target_family = "wasm")]
+fn build_http_client(_config: &HttpClientConfig) -> Result<Client> {
+    Client::builder()
+        .build()
+        .map_err(|e| CatalogError::HttpError(format!("Failed to build HTTP client: {}", e)))
 }

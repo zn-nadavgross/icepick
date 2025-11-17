@@ -14,7 +14,10 @@ pub mod types;
 
 pub use data_file::{DataContentType, DataFile};
 pub use identifier::{NamespaceIdent, TableIdent};
-pub use metadata::TableMetadata;
+pub use metadata::{
+    MetadataLogEntry, PartitionField, PartitionSpec, SnapshotLogEntry, SnapshotReference,
+    SortField, SortOrder, TableMetadata,
+};
 pub use schema::Schema;
 pub use snapshot::{Snapshot, Summary};
 pub use table_creation::{TableCreation, TableCreationBuilder};

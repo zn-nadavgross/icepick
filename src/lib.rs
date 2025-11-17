@@ -71,6 +71,7 @@ pub use spec::{
 };
 pub use table::Table;
 pub use transaction::Transaction;
+pub use writer::arrow_to_parquet;
 
 // Re-export catalog types
 pub use catalog::r2::R2Catalog;

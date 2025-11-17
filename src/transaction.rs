@@ -11,14 +11,14 @@ pub enum TransactionOperation {
 }
 
 /// A transaction for modifying a table
-pub struct Transaction<'a> {
-    table: &'a Table,
+pub struct Transaction {
+    table: Table,
     operations: Vec<TransactionOperation>,
 }
 
-impl<'a> Transaction<'a> {
+impl Transaction {
     /// Create a new transaction
-    pub(crate) fn new(table: &'a Table) -> Self {
+    pub(crate) fn new(table: Table) -> Self {
         Self {
             table,
             operations: Vec::new(),
@@ -27,7 +27,7 @@ impl<'a> Transaction<'a> {
 
     /// Get the table this transaction operates on
     pub fn table(&self) -> &Table {
-        self.table
+        &self.table
     }
 
     /// Append data files to the table
@@ -46,6 +46,14 @@ impl<'a> Transaction<'a> {
     #[allow(dead_code)]
     pub(crate) fn operations(&self) -> &[TransactionOperation] {
         &self.operations
+    }
+
+    /// Replace the table metadata backing this transaction (for retries)
+    pub(crate) fn rebind_table(self, table: Table) -> Self {
+        Self {
+            table,
+            operations: self.operations,
+        }
     }
 
     /// Commit the transaction, writing snapshots to the catalog

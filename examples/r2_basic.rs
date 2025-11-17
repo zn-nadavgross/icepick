@@ -5,6 +5,8 @@ use icepick::spec::{
 };
 use icepick::writer::ParquetWriter;
 use icepick::R2Catalog;
+use tracing::{info, warn};
+use tracing_subscriber::EnvFilter;
 
 /// Create R2 Data Catalog with Bearer token authentication from .env
 async fn create_r2_catalog_from_env() -> Result<R2Catalog> {
@@ -59,10 +61,19 @@ fn create_sample_data(iceberg_schema: &Schema) -> Result<RecordBatch> {
     Ok(batch)
 }
 
+fn init_tracing() {
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .init();
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Load .env file early for all environment variables
     dotenvy::dotenv().ok();
+    init_tracing();
 
     let args: Vec<String> = std::env::args().collect();
     let (namespace_name, table_name) = if args.len() == 3 {
@@ -73,8 +84,8 @@ async fn main() -> Result<()> {
         let namespace =
             std::env::var("CLOUDFLARE_NAMESPACE").unwrap_or_else(|_| "default".to_string());
         let table = std::env::var("CLOUDFLARE_TABLE").unwrap_or_else(|_| "test_table".to_string());
-        println!("Usage: {} <namespace> <table-name>", args[0]);
-        println!("Using defaults: namespace={}, table={}", namespace, table);
+        info!("Usage: {} <namespace> <table-name>", args[0]);
+        info!("Using defaults: namespace={}, table={}", namespace, table);
         (namespace, table)
     };
 
@@ -82,24 +93,24 @@ async fn main() -> Result<()> {
         .await
         .context("Failed to connect to R2 Data Catalog")?;
 
-    println!("✓ Connected to R2 Data Catalog");
+    info!("✓ Connected to R2 Data Catalog");
 
     let namespace = NamespaceIdent::new(vec![namespace_name.clone()]);
 
     // Cloudflare R2 requires explicit namespace creation
     // Try to create the namespace
-    println!("Creating namespace: {}", namespace_name);
+    info!("Creating namespace: {}", namespace_name);
     match catalog
         .create_namespace(&namespace, Default::default())
         .await
     {
-        Ok(_) => println!("✓ Created namespace: {}", namespace_name),
+        Ok(_) => info!("✓ Created namespace: {}", namespace_name),
         Err(e) if e.to_string().contains("lready exists") || e.to_string().contains("Conflict") => {
-            println!("ℹ Namespace already exists: {}", namespace_name)
+            info!("ℹ Namespace already exists: {}", namespace_name)
         }
         Err(e) => {
-            eprintln!("Warning: Failed to create namespace: {}", e);
-            println!("ℹ Attempting to continue with existing namespace");
+            warn!("Failed to create namespace: {}", e);
+            info!("ℹ Attempting to continue with existing namespace");
         }
     }
 
@@ -108,17 +119,17 @@ async fn main() -> Result<()> {
     // Try to load the table first, create if it doesn't exist
     let table_ident = TableIdent::new(namespace.clone(), table_name.clone());
 
-    println!(
+    info!(
         "Attempting to load table: {}.{}",
         namespace_name, table_name
     );
     let table = match catalog.load_table(&table_ident).await {
         Ok(table) => {
-            println!("✓ Loaded existing table: {}.{}", namespace_name, table_name);
+            info!("✓ Loaded existing table: {}.{}", namespace_name, table_name);
             table
         }
         Err(load_err) => {
-            println!("Table not found, attempting to create: {}", load_err);
+            info!("Table not found, attempting to create: {}", load_err);
             let table_creation = TableCreation::builder()
                 .with_name(table_name.clone())
                 .with_schema(schema.clone())
@@ -133,7 +144,7 @@ async fn main() -> Result<()> {
                     table_name, load_err
                 ))?;
 
-            println!("✓ Created table: {}.{}", namespace_name, table_name);
+            info!("✓ Created table: {}.{}", namespace_name, table_name);
             table
         }
     };
@@ -141,8 +152,14 @@ async fn main() -> Result<()> {
     let batch = create_sample_data(&schema)?;
 
     // Create simple icepick ParquetWriter
-    let mut writer = ParquetWriter::new(table.metadata().current_schema().clone())
-        .context("Failed to create Parquet writer")?;
+    let mut writer = ParquetWriter::new(
+        table
+            .metadata()
+            .current_schema()
+            .context("Failed to load current schema")?
+            .clone(),
+    )
+    .context("Failed to create Parquet writer")?;
 
     writer
         .write_batch(&batch)
@@ -159,7 +176,7 @@ async fn main() -> Result<()> {
         .await
         .context("Failed to finish writing Parquet file")?;
 
-    println!("✓ Wrote {} rows to {}", batch.num_rows(), file_path);
+    info!("✓ Wrote {} rows to {}", batch.num_rows(), file_path);
 
     // Commit using icepick transaction
     table
@@ -169,20 +186,20 @@ async fn main() -> Result<()> {
         .await
         .context("Failed to commit transaction")?;
 
-    println!("✓ Committed snapshot to table");
+    info!("✓ Committed snapshot to table");
 
     // Read data back
-    println!("\n--- Reading data back ---");
+    info!("--- Reading data back ---");
 
     // Reload table to get latest metadata
     let table = catalog.load_table(&table_ident).await?;
 
     // List data files
     let files = table.files().await?;
-    println!("✓ Found {} data file(s)", files.len());
+    info!("✓ Found {} data file(s)", files.len());
     for file in &files {
-        println!(
-            "  - {} ({} records, {} bytes)",
+        info!(
+            "Data file {} ({} records, {} bytes)",
             file.file_path, file.record_count, file.file_size_in_bytes
         );
     }
@@ -194,21 +211,21 @@ async fn main() -> Result<()> {
     use futures::StreamExt;
 
     let mut total_rows = 0;
-    println!("\nReading batches:");
+    info!("Reading batches:");
     while let Some(batch_result) = stream.next().await {
         let batch = batch_result?;
         total_rows += batch.num_rows();
-        println!("  Batch: {} rows", batch.num_rows());
+        info!("Batch: {} rows", batch.num_rows());
 
         // Print the first batch as a sample
         if total_rows == batch.num_rows() {
             use arrow::util::pretty::print_batches;
-            println!("\nSample data:");
+            info!("Sample data:");
             print_batches(&[batch])?;
         }
     }
 
-    println!("\n✓ Read {} total rows", total_rows);
+    info!("✓ Read {} total rows", total_rows);
 
     Ok(())
 }

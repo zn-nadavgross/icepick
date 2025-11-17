@@ -3,6 +3,7 @@
 use crate::error::{Error, Result};
 use crate::spec::{PrimitiveType, Schema, Type};
 use arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
+use std::convert::TryFrom;
 use std::sync::Arc;
 
 /// Convert Iceberg schema to Arrow schema
@@ -41,7 +42,22 @@ fn type_to_arrow(iceberg_type: &Type) -> Result<DataType> {
                 Some(Arc::from("UTC")),
             )),
             PrimitiveType::Decimal { precision, scale } => {
-                Ok(DataType::Decimal128(*precision as u8, *scale as i8))
+                let precision_i32 = i32::try_from(*precision).map_err(|_| {
+                    Error::invalid_input(format!("Decimal precision {} too large", precision))
+                })?;
+                let scale_i32 = i32::try_from(*scale).map_err(|_| {
+                    Error::invalid_input(format!("Decimal scale {} too large", scale))
+                })?;
+                let precision_u8 = u8::try_from(precision_i32).map_err(|_| {
+                    Error::invalid_input(format!(
+                        "Decimal precision {} out of range",
+                        precision_i32
+                    ))
+                })?;
+                let scale_i8 = i8::try_from(scale_i32).map_err(|_| {
+                    Error::invalid_input(format!("Decimal scale {} out of range", scale_i32))
+                })?;
+                Ok(DataType::Decimal128(precision_u8, scale_i8))
             }
             _ => Err(Error::invalid_input(format!(
                 "Unsupported primitive type: {:?}",
@@ -59,10 +75,21 @@ fn type_to_arrow(iceberg_type: &Type) -> Result<DataType> {
                 .collect();
             Ok(DataType::Struct(fields?.into()))
         }
-        Type::List(_list_type) => {
-            // Simplified list handling for MVP
-            Err(Error::invalid_input("List type not yet fully supported"))
+        Type::List(list_type) => {
+            let element_type = type_to_arrow(list_type.element_type())?;
+            let element_field = Field::new("element", element_type, !list_type.element_required());
+            Ok(DataType::List(Arc::new(element_field)))
         }
-        Type::Map(_) => Err(Error::invalid_input("Map type not yet supported")),
+        Type::Map(map_type) => {
+            let key_type = type_to_arrow(map_type.key_type())?;
+            let value_type = type_to_arrow(map_type.value_type())?;
+            let struct_fields = vec![
+                Field::new("key", key_type, false),
+                Field::new("value", value_type, !map_type.value_required()),
+            ];
+            let entries_field =
+                Field::new("entries", DataType::Struct(struct_fields.into()), false);
+            Ok(DataType::Map(Arc::new(entries_field), false))
+        }
     }
 }

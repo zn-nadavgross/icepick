@@ -27,6 +27,8 @@ pub struct DataFile {
     file_path: String,
     #[serde(rename = "file-format")]
     file_format: String,
+    #[serde(rename = "partition", default)]
+    partition: HashMap<String, String>,
     #[serde(rename = "record-count")]
     record_count: i64,
     #[serde(rename = "file-size-in-bytes")]
@@ -37,6 +39,8 @@ pub struct DataFile {
     value_counts: Option<HashMap<i32, i64>>,
     #[serde(rename = "null-value-counts", skip_serializing_if = "Option::is_none")]
     null_value_counts: Option<HashMap<i32, i64>>,
+    #[serde(rename = "equality-ids", skip_serializing_if = "Option::is_none")]
+    equality_ids: Option<Vec<i32>>,
     #[serde(rename = "lower-bounds", skip_serializing_if = "Option::is_none")]
     lower_bounds: Option<HashMap<i32, Vec<u8>>>,
     #[serde(rename = "upper-bounds", skip_serializing_if = "Option::is_none")]
@@ -69,6 +73,11 @@ impl DataFile {
         self.record_count
     }
 
+    /// Get partition data
+    pub fn partition(&self) -> &HashMap<String, String> {
+        &self.partition
+    }
+
     /// Get file size in bytes
     pub fn file_size_in_bytes(&self) -> i64 {
         self.file_size_in_bytes
@@ -88,6 +97,21 @@ impl DataFile {
     pub fn null_value_counts(&self) -> Option<&HashMap<i32, i64>> {
         self.null_value_counts.as_ref()
     }
+
+    /// Get equality IDs
+    pub fn equality_ids(&self) -> Option<&[i32]> {
+        self.equality_ids.as_deref()
+    }
+
+    /// Get lower bounds
+    pub fn lower_bounds(&self) -> Option<&HashMap<i32, Vec<u8>>> {
+        self.lower_bounds.as_ref()
+    }
+
+    /// Get upper bounds
+    pub fn upper_bounds(&self) -> Option<&HashMap<i32, Vec<u8>>> {
+        self.upper_bounds.as_ref()
+    }
 }
 
 /// Builder for DataFile
@@ -96,11 +120,13 @@ pub struct DataFileBuilder {
     content_type: Option<DataContentType>,
     file_path: Option<String>,
     file_format: Option<String>,
+    partition: Option<HashMap<String, String>>,
     record_count: Option<i64>,
     file_size_in_bytes: Option<i64>,
     column_sizes: Option<HashMap<i32, i64>>,
     value_counts: Option<HashMap<i32, i64>>,
     null_value_counts: Option<HashMap<i32, i64>>,
+    equality_ids: Option<Vec<i32>>,
     lower_bounds: Option<HashMap<i32, Vec<u8>>>,
     upper_bounds: Option<HashMap<i32, Vec<u8>>>,
 }
@@ -118,6 +144,11 @@ impl DataFileBuilder {
 
     pub fn with_file_format(mut self, format: &str) -> Self {
         self.file_format = Some(format.to_string());
+        self
+    }
+
+    pub fn with_partition(mut self, partition: HashMap<String, String>) -> Self {
+        self.partition = Some(partition);
         self
     }
 
@@ -146,6 +177,21 @@ impl DataFileBuilder {
         self
     }
 
+    pub fn with_equality_ids(mut self, ids: Vec<i32>) -> Self {
+        self.equality_ids = Some(ids);
+        self
+    }
+
+    pub fn with_lower_bounds(mut self, bounds: HashMap<i32, Vec<u8>>) -> Self {
+        self.lower_bounds = Some(bounds);
+        self
+    }
+
+    pub fn with_upper_bounds(mut self, bounds: HashMap<i32, Vec<u8>>) -> Self {
+        self.upper_bounds = Some(bounds);
+        self
+    }
+
     pub fn build(self) -> Result<DataFile> {
         Ok(DataFile {
             content_type: self.content_type.unwrap_or_default(),
@@ -155,6 +201,7 @@ impl DataFileBuilder {
             file_format: self
                 .file_format
                 .ok_or_else(|| Error::InvalidInput("DataFile must have file format".to_string()))?,
+            partition: self.partition.unwrap_or_default(),
             record_count: self.record_count.ok_or_else(|| {
                 Error::InvalidInput("DataFile must have record count".to_string())
             })?,
@@ -164,6 +211,7 @@ impl DataFileBuilder {
             column_sizes: self.column_sizes,
             value_counts: self.value_counts,
             null_value_counts: self.null_value_counts,
+            equality_ids: self.equality_ids,
             lower_bounds: self.lower_bounds,
             upper_bounds: self.upper_bounds,
         })

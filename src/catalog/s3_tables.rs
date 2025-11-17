@@ -6,7 +6,7 @@
 #![cfg(not(target_family = "wasm"))]
 
 use crate::catalog::rest::IcebergRestCatalog;
-use crate::catalog::Catalog;
+use crate::catalog::{Catalog, CatalogOptions};
 use crate::error::{Error, Result};
 use crate::spec::{NamespaceIdent, TableCreation, TableIdent};
 use crate::table::Table;
@@ -54,6 +54,9 @@ use std::collections::HashMap;
 /// - ECS task role (when running on ECS)
 ///
 /// Ensure your AWS credentials have appropriate permissions for S3 Tables operations.
+///
+/// Use [`S3TablesCatalog::from_arn_with_options`] to customize HTTP behaviour or
+/// operate on references other than `main`.
 #[derive(Debug)]
 pub struct S3TablesCatalog {
     inner: IcebergRestCatalog,
@@ -93,17 +96,44 @@ impl S3TablesCatalog {
 
         let inner = IcebergRestCatalog::from_s3_tables_arn(name, arn)
             .await
-            .map_err(|e| match e {
-                crate::catalog::CatalogError::InvalidArn(msg) => Error::invalid_arn(msg),
-                crate::catalog::CatalogError::AuthError(msg) => Error::unauthorized(msg),
-                crate::catalog::CatalogError::HttpError(msg) => Error::unexpected(msg),
-                crate::catalog::CatalogError::NotFound(msg) => Error::not_found(msg),
-                crate::catalog::CatalogError::Conflict(msg) => Error::conflict(msg),
-                crate::catalog::CatalogError::InvalidRequest(msg) => Error::invalid_request(msg),
-                crate::catalog::CatalogError::Unexpected(msg) => Error::unexpected(msg),
-            })?;
+            .map_err(map_catalog_error)?;
 
         Ok(Self { inner })
+    }
+
+    /// Create a new catalog with explicit options such as HTTP configuration and reference.
+    ///
+    /// * `name` / `arn` - Same as [`S3TablesCatalog::from_arn`]
+    /// * `options` - Additional configuration (HTTP timeouts, retries, default branch)
+    pub async fn from_arn_with_options(
+        name: impl Into<String>,
+        arn: impl AsRef<str>,
+        options: CatalogOptions,
+    ) -> Result<Self> {
+        let name = name.into();
+        let arn = arn.as_ref();
+
+        let inner = IcebergRestCatalog::from_s3_tables_arn_with_options(name, arn, options)
+            .await
+            .map_err(map_catalog_error)?;
+
+        Ok(Self { inner })
+    }
+}
+
+fn map_catalog_error(e: crate::catalog::CatalogError) -> Error {
+    match e {
+        crate::catalog::CatalogError::InvalidArn(msg) => Error::invalid_arn(msg),
+        crate::catalog::CatalogError::AuthError(msg) => Error::unauthorized(msg),
+        crate::catalog::CatalogError::HttpError(msg) => Error::unexpected(msg),
+        crate::catalog::CatalogError::ServerError { status, message } => {
+            Error::server_error(status, message)
+        }
+        crate::catalog::CatalogError::Network(err) => Error::NetworkError { source: err },
+        crate::catalog::CatalogError::NotFound(msg) => Error::not_found(msg),
+        crate::catalog::CatalogError::Conflict(msg) => Error::conflict(msg),
+        crate::catalog::CatalogError::InvalidRequest(msg) => Error::invalid_request(msg),
+        crate::catalog::CatalogError::Unexpected(msg) => Error::unexpected(msg),
     }
 }
 

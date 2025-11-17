@@ -3,11 +3,15 @@
 use crate::error::Result;
 use crate::spec::DataFile;
 use apache_avro::types::Value;
+use std::collections::HashMap;
 
 /// Convert a DataFile to an Avro Record value for manifest entry
 pub fn data_file_to_avro(data_file: &DataFile) -> Result<Value> {
-    use std::collections::HashMap;
-
+    let partition_map: HashMap<String, Value> = data_file
+        .partition()
+        .iter()
+        .map(|(k, v)| (k.clone(), Value::String(v.clone())))
+        .collect();
     let mut fields = vec![
         ("content".to_string(), Value::Int(0)), // 0 = DATA
         (
@@ -18,7 +22,7 @@ pub fn data_file_to_avro(data_file: &DataFile) -> Result<Value> {
             "file_format".to_string(),
             Value::String(data_file.file_format().to_string()),
         ),
-        ("partition".to_string(), Value::Map(HashMap::new())), // Empty for unpartitioned
+        ("partition".to_string(), Value::Map(partition_map)),
         (
             "record_count".to_string(),
             Value::Long(data_file.record_count()),
@@ -66,16 +70,28 @@ pub fn data_file_to_avro(data_file: &DataFile) -> Result<Value> {
     fields.push(("null_value_counts".to_string(), null_value_counts));
 
     // Optional lower_bounds
-    fields.push((
-        "lower_bounds".to_string(),
-        Value::Union(0, Box::new(Value::Null)),
-    ));
+    let lower_bounds = if let Some(bounds) = data_file.lower_bounds() {
+        let map: HashMap<String, Value> = bounds
+            .iter()
+            .map(|(k, v)| (k.to_string(), Value::Bytes(v.clone())))
+            .collect();
+        Value::Union(1, Box::new(Value::Map(map)))
+    } else {
+        Value::Union(0, Box::new(Value::Null))
+    };
+    fields.push(("lower_bounds".to_string(), lower_bounds));
 
     // Optional upper_bounds
-    fields.push((
-        "upper_bounds".to_string(),
-        Value::Union(0, Box::new(Value::Null)),
-    ));
+    let upper_bounds = if let Some(bounds) = data_file.upper_bounds() {
+        let map: HashMap<String, Value> = bounds
+            .iter()
+            .map(|(k, v)| (k.to_string(), Value::Bytes(v.clone())))
+            .collect();
+        Value::Union(1, Box::new(Value::Map(map)))
+    } else {
+        Value::Union(0, Box::new(Value::Null))
+    };
+    fields.push(("upper_bounds".to_string(), upper_bounds));
 
     // Optional fields set to null for MVP
     fields.push((
@@ -88,7 +104,12 @@ pub fn data_file_to_avro(data_file: &DataFile) -> Result<Value> {
     ));
     fields.push((
         "equality_ids".to_string(),
-        Value::Union(0, Box::new(Value::Null)),
+        if let Some(ids) = data_file.equality_ids() {
+            let values = ids.iter().map(|id| Value::Int(*id)).collect();
+            Value::Union(1, Box::new(Value::Array(values)))
+        } else {
+            Value::Union(0, Box::new(Value::Null))
+        },
     ));
     fields.push((
         "sort_order_id".to_string(),

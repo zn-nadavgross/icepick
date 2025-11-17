@@ -2,4 +2,4 @@
 
 pub mod manifest;
 
-pub use manifest::{DataFileEntry, ManifestListReader, ManifestReader};
+pub use manifest::{DataFileEntry, ManifestFileInfo, ManifestListReader, ManifestReader};

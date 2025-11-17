@@ -1,5 +1,5 @@
 use icepick::io::FileIO;
-use icepick::manifest::writer::{write_manifest, write_manifest_list};
+use icepick::manifest::writer::{write_manifest, write_manifest_list, ManifestListEntry};
 use icepick::spec::DataFile;
 use opendal::Operator;
 
@@ -39,18 +39,26 @@ async fn test_write_manifest_list() {
     let added_rows_count = 500;
 
     let list_path = "metadata/snap-1-1-test.avro";
-    write_manifest_list(
-        &file_io,
-        list_path,
-        manifest_path,
+
+    let entry = ManifestListEntry {
+        manifest_path: manifest_path.to_string(),
         manifest_length,
-        1, // snapshot_id
-        1, // sequence_number
+        partition_spec_id: 0,
+        content: 0,
+        sequence_number: 1,
+        min_sequence_number: 1,
+        added_snapshot_id: 1,
         added_files_count,
+        existing_files_count: 0,
+        deleted_files_count: 0,
         added_rows_count,
-    )
-    .await
-    .unwrap();
+        existing_rows_count: 0,
+        deleted_rows_count: 0,
+    };
+
+    write_manifest_list(&file_io, list_path, vec![entry])
+        .await
+        .unwrap();
 
     // Verify file exists
     let exists = op.exists(list_path).await.unwrap();

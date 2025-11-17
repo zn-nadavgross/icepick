@@ -236,7 +236,7 @@ async fn test_multiple_sequential_commits() {
     let updated_metadata: TableMetadata = serde_json::from_slice(&metadata_bytes.to_vec()).unwrap();
 
     table = Table::new(
-        ident,
+        ident.clone(),
         updated_metadata,
         "memory://warehouse/test/multi/metadata/v1.metadata.json".to_string(),
         file_io.clone(),
@@ -283,4 +283,33 @@ async fn test_multiple_sequential_commits() {
     // Verify the second snapshot has the first as its parent
     let first_snapshot_id = snapshots[0].snapshot_id();
     assert_eq!(snapshots[1].parent_snapshot_id(), Some(first_snapshot_id));
+
+    // NEW TEST: Verify we can read data files from BOTH commits
+    let reloaded_table = Table::new(
+        ident,
+        final_metadata,
+        "memory://warehouse/test/multi/metadata/v2.metadata.json".to_string(),
+        file_io,
+    );
+
+    let files = reloaded_table.files().await.unwrap();
+    assert_eq!(files.len(), 2, "Should have 2 data files from both commits");
+
+    // Verify both files are present
+    let file_paths: Vec<String> = files.iter().map(|f| f.file_path.clone()).collect();
+    assert!(
+        file_paths.contains(&"memory://warehouse/test/multi/data/file1.parquet".to_string()),
+        "Should include file1 from first commit"
+    );
+    assert!(
+        file_paths.contains(&"memory://warehouse/test/multi/data/file2.parquet".to_string()),
+        "Should include file2 from second commit"
+    );
+
+    // Verify total record count
+    let total_records: i64 = files.iter().map(|f| f.record_count).sum();
+    assert_eq!(
+        total_records, 300,
+        "Should have 100 + 200 = 300 total records"
+    );
 }

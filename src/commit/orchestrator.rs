@@ -2,7 +2,8 @@
 
 use crate::commit::paths::{manifest_list_path, manifest_path, next_metadata_path};
 use crate::error::{Error, Result};
-use crate::manifest::writer::{write_manifest, write_manifest_list};
+use crate::manifest::writer::{write_manifest, write_manifest_list, ManifestListEntry};
+use crate::reader::ManifestListReader;
 use crate::spec::{Snapshot, Summary};
 use crate::transaction::{Transaction, TransactionOperation};
 use tracing::debug;
@@ -90,22 +91,75 @@ pub async fn try_commit(
     )
     .await?;
 
-    // 2. Write manifest list
+    // 2. Build manifest list entries
     let manifest_list_file_path = manifest_list_path(table.location(), snapshot_id, &commit_uuid);
     let added_files_count = all_data_files.len() as i32;
     let added_rows_count: i64 = all_data_files.iter().map(|f| f.record_count()).sum();
 
-    write_manifest_list(
-        file_io,
-        &manifest_list_file_path,
-        &manifest_file_path,
-        manifest_bytes,
-        snapshot_id,
+    let mut manifest_entries = Vec::new();
+
+    // 2a. Carry forward manifests from parent snapshot (if exists)
+    if let Some(parent_snapshot) = table.current_snapshot() {
+        debug!(
+            "Reading parent manifest list from: {}",
+            parent_snapshot.manifest_list()
+        );
+        let parent_manifest_infos =
+            ManifestListReader::read_entries(file_io, parent_snapshot.manifest_list()).await?;
+
+        for parent_info in parent_manifest_infos {
+            // Convert parent manifests to "existing" entries
+            // Move counts from "added" to "existing" since these files now exist from a previous snapshot
+            let existing_entry = ManifestListEntry {
+                manifest_path: parent_info.manifest_path,
+                manifest_length: parent_info.manifest_length,
+                partition_spec_id: parent_info.partition_spec_id,
+                content: parent_info.content,
+                sequence_number: parent_info.sequence_number,
+                min_sequence_number: parent_info.min_sequence_number,
+                added_snapshot_id: parent_info.added_snapshot_id,
+                added_files_count: 0, // No new files from this old manifest
+                existing_files_count: parent_info.added_files_count
+                    + parent_info.existing_files_count, // All files are now existing
+                deleted_files_count: parent_info.deleted_files_count,
+                added_rows_count: 0, // No new rows from this old manifest
+                existing_rows_count: parent_info.added_rows_count + parent_info.existing_rows_count, // All rows are now existing
+                deleted_rows_count: parent_info.deleted_rows_count,
+            };
+            manifest_entries.push(existing_entry);
+        }
+
+        debug!(
+            "Carried forward {} manifests from parent snapshot",
+            manifest_entries.len()
+        );
+    }
+
+    // 2b. Add the new manifest entry
+    let new_manifest_entry = ManifestListEntry {
+        manifest_path: manifest_file_path.clone(),
+        manifest_length: manifest_bytes,
+        partition_spec_id: 0, // Unpartitioned
+        content: 0,           // 0 = DATA
         sequence_number,
+        min_sequence_number: sequence_number,
+        added_snapshot_id: snapshot_id,
         added_files_count,
+        existing_files_count: 0,
+        deleted_files_count: 0,
         added_rows_count,
-    )
-    .await?;
+        existing_rows_count: 0,
+        deleted_rows_count: 0,
+    };
+    manifest_entries.push(new_manifest_entry);
+
+    debug!(
+        "Writing manifest list with {} entries total",
+        manifest_entries.len()
+    );
+
+    // 2c. Write manifest list
+    write_manifest_list(file_io, &manifest_list_file_path, manifest_entries).await?;
 
     // 3. Create snapshot
     let summary = Summary::builder()

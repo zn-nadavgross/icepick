@@ -93,8 +93,13 @@ impl StructType {
 /// Placeholder for list type
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ListType {
+    #[serde(rename = "type")]
+    r#type: String,
+    #[serde(rename = "element-id")]
     element_id: i32,
+    #[serde(rename = "element-required")]
     element_required: bool,
+    #[serde(rename = "element")]
     element_type: Box<Type>,
 }
 
@@ -102,6 +107,7 @@ impl ListType {
     /// Construct a new list type
     pub fn new(element_id: i32, element_required: bool, element_type: Type) -> Self {
         Self {
+            r#type: "list".to_string(),
             element_id,
             element_required,
             element_type: Box::new(element_type),
@@ -122,10 +128,17 @@ impl ListType {
 /// Placeholder for map type
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MapType {
+    #[serde(rename = "type")]
+    r#type: String,
+    #[serde(rename = "key-id")]
     key_id: i32,
+    #[serde(rename = "key")]
     key_type: Box<Type>,
+    #[serde(rename = "value-id")]
     value_id: i32,
+    #[serde(rename = "value-required")]
     value_required: bool,
+    #[serde(rename = "value")]
     value_type: Box<Type>,
 }
 
@@ -139,6 +152,7 @@ impl MapType {
         value_type: Type,
     ) -> Self {
         Self {
+            r#type: "map".to_string(),
             key_id,
             key_type: Box::new(key_type),
             value_id,
@@ -160,6 +174,55 @@ impl MapType {
     /// Whether the value is required
     pub fn value_required(&self) -> bool {
         self.value_required
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::Value;
+
+    fn get_type_field(value: &Value) -> Option<&str> {
+        value.get("type")?.as_str()
+    }
+
+    #[test]
+    fn struct_type_serializes_with_type_field() {
+        let struct_type = StructType::new(vec![NestedField::required_field(
+            1,
+            "field".into(),
+            Type::Primitive(PrimitiveType::Int),
+        )]);
+        let json = serde_json::to_value(&struct_type).unwrap();
+        assert_eq!(get_type_field(&json), Some("struct"));
+    }
+
+    #[test]
+    fn list_type_serializes_with_type_field() {
+        let list_type = ListType::new(2, true, Type::Primitive(PrimitiveType::String));
+        let json = serde_json::to_value(&list_type).unwrap();
+        assert_eq!(get_type_field(&json), Some("list"));
+        assert!(json.get("element-id").is_some());
+        assert!(json.get("element-required").is_some());
+        assert!(json.get("element").is_some());
+    }
+
+    #[test]
+    fn map_type_serializes_with_type_field() {
+        let map_type = MapType::new(
+            3,
+            Type::Primitive(PrimitiveType::String),
+            4,
+            false,
+            Type::Primitive(PrimitiveType::Long),
+        );
+        let json = serde_json::to_value(&map_type).unwrap();
+        assert_eq!(get_type_field(&json), Some("map"));
+        assert!(json.get("key-id").is_some());
+        assert!(json.get("key").is_some());
+        assert!(json.get("value-id").is_some());
+        assert!(json.get("value-required").is_some());
+        assert!(json.get("value").is_some());
     }
 }
 

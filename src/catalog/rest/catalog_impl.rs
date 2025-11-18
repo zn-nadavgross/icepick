@@ -407,6 +407,7 @@ fn contains_metadata_error(message: &str) -> bool {
         || message.contains("set-current-table-metadata")
 }
 
+#[cfg_attr(target_family = "wasm", allow(dead_code))]
 const COMMIT_TABLE_ENV: &str = "ICEPICK_USE_COMMIT_TABLE";
 
 #[cfg(target_family = "wasm")]

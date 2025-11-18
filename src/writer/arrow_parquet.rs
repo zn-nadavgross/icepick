@@ -6,6 +6,8 @@
 
 use crate::error::{Error, Result};
 use crate::io::FileIO;
+use crate::spec::{DataFile, Schema};
+use crate::writer::stats::StatsCollector;
 use arrow::record_batch::RecordBatch;
 use parquet::arrow::ArrowWriter;
 use parquet::basic::Compression;
@@ -47,6 +49,7 @@ pub struct ArrowParquetBuilder<'a> {
     path: String,
     file_io: &'a FileIO,
     compression: Compression,
+    stats_collector: Option<StatsCollector>,
 }
 
 impl<'a> ArrowParquetBuilder<'a> {
@@ -57,6 +60,7 @@ impl<'a> ArrowParquetBuilder<'a> {
             path,
             file_io,
             compression: Compression::SNAPPY,
+            stats_collector: None,
         }
     }
 
@@ -73,17 +77,58 @@ impl<'a> ArrowParquetBuilder<'a> {
         self
     }
 
+    /// Enable Iceberg statistics collection so the builder can return a `DataFile`.
+    ///
+    /// This requires the Iceberg table schema so field IDs can be recorded correctly.
+    /// Use [`finish_data_file`](Self::finish_data_file) to write the file and obtain
+    /// a fully populated `DataFile`.
+    pub fn with_iceberg_schema(mut self, schema: &Schema) -> Self {
+        self.stats_collector = Some(StatsCollector::new(schema));
+        self
+    }
+
     /// Execute the write operation
     ///
     /// Writes the RecordBatch to an in-memory Parquet file, then uploads to S3.
     /// The entire file is buffered in memory before upload.
     pub async fn finish(self) -> Result<()> {
-        // Create writer properties with compression
+        self.write_parquet().await?;
+        Ok(())
+    }
+
+    /// Finish the write, returning a `DataFile` populated with Iceberg statistics.
+    ///
+    /// Call [`with_iceberg_schema`](Self::with_iceberg_schema) before using this method
+    /// so statistics can be tracked for manifest entries.
+    pub async fn finish_data_file(mut self) -> Result<DataFile> {
+        let mut stats_collector = self.stats_collector.take().ok_or_else(|| {
+            Error::invalid_input(
+                "finish_data_file() requires with_iceberg_schema() to be called first",
+            )
+        })?;
+        stats_collector.collect(self.batch)?;
+        let stats = stats_collector.finalize();
+
+        let (path, file_size) = self.write_parquet().await?;
+
+        DataFile::builder()
+            .with_file_path(&path)
+            .with_file_format("PARQUET")
+            .with_record_count(stats.record_count)
+            .with_file_size_in_bytes(file_size)
+            .with_column_sizes(stats.column_sizes)
+            .with_value_counts(stats.value_counts)
+            .with_null_value_counts(stats.null_value_counts)
+            .with_lower_bounds(stats.lower_bounds)
+            .with_upper_bounds(stats.upper_bounds)
+            .build()
+    }
+
+    async fn write_parquet(self) -> Result<(String, i64)> {
         let props = WriterProperties::builder()
             .set_compression(self.compression)
             .build();
 
-        // Write Parquet to in-memory buffer
         let mut buffer = Vec::new();
         {
             let mut writer = ArrowWriter::try_new(&mut buffer, self.batch.schema(), Some(props))
@@ -100,10 +145,10 @@ impl<'a> ArrowParquetBuilder<'a> {
             })?;
         }
 
-        // Upload to S3 via FileIO
-        self.file_io.write(&self.path, buffer).await?;
-
-        Ok(())
+        let file_size = buffer.len() as i64;
+        let path = self.path;
+        self.file_io.write(&path, buffer).await?;
+        Ok((path, file_size))
     }
 }
 

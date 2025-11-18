@@ -1,30 +1,19 @@
 use arrow::array::{Int64Array, StringArray};
 use arrow::datatypes::{DataType as ArrowDataType, Field as ArrowField, Schema as ArrowSchema};
 use arrow::record_batch::RecordBatch;
-use icepick::spec::{NestedField, PrimitiveType, Schema, Type};
+use icepick::arrow_convert::PARQUET_FIELD_ID_METADATA_KEY;
 use icepick::writer::stats::StatsCollector;
+use std::collections::HashMap;
 use std::convert::TryInto;
 use std::sync::Arc;
 
 #[test]
 fn test_stats_collector_basic() {
-    let schema = Schema::builder()
-        .with_fields(vec![
-            NestedField::required_field(1, "id".to_string(), Type::Primitive(PrimitiveType::Long)),
-            NestedField::optional_field(
-                2,
-                "name".to_string(),
-                Type::Primitive(PrimitiveType::String),
-            ),
-        ])
-        .build()
-        .unwrap();
-    let mut collector = StatsCollector::new(&schema);
-
     let arrow_schema = ArrowSchema::new(vec![
-        ArrowField::new("id", ArrowDataType::Int64, false),
-        ArrowField::new("name", ArrowDataType::Utf8, true),
+        field_with_id("id", ArrowDataType::Int64, false, 1),
+        field_with_id("name", ArrowDataType::Utf8, true, 2),
     ]);
+    let mut collector = StatsCollector::new(&arrow_schema).unwrap();
 
     let batch = RecordBatch::try_new(
         Arc::new(arrow_schema),
@@ -54,17 +43,8 @@ fn test_stats_collector_basic() {
 
 #[test]
 fn test_stats_collector_multiple_batches() {
-    let schema = Schema::builder()
-        .with_fields(vec![NestedField::required_field(
-            10,
-            "id".to_string(),
-            Type::Primitive(PrimitiveType::Long),
-        )])
-        .build()
-        .unwrap();
-    let mut collector = StatsCollector::new(&schema);
-
-    let arrow_schema = ArrowSchema::new(vec![ArrowField::new("id", ArrowDataType::Int64, false)]);
+    let arrow_schema = ArrowSchema::new(vec![field_with_id("id", ArrowDataType::Int64, false, 10)]);
+    let mut collector = StatsCollector::new(&arrow_schema).unwrap();
 
     let batch1 = RecordBatch::try_new(
         Arc::new(arrow_schema.clone()),
@@ -84,4 +64,13 @@ fn test_stats_collector_multiple_batches() {
     let stats = collector.finalize();
     assert_eq!(stats.record_count, 5);
     assert_eq!(stats.value_counts.get(&10), Some(&5));
+}
+
+fn field_with_id(name: &str, data_type: ArrowDataType, nullable: bool, id: i32) -> ArrowField {
+    let mut field = ArrowField::new(name, data_type, nullable);
+    field.set_metadata(HashMap::from([(
+        PARQUET_FIELD_ID_METADATA_KEY.to_string(),
+        id.to_string(),
+    )]));
+    field
 }

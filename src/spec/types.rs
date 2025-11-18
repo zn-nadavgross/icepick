@@ -79,6 +79,11 @@ impl ListType {
         }
     }
 
+    /// Get the element field ID
+    pub fn element_id(&self) -> i32 {
+        self.element_id
+    }
+
     /// Get the element type
     pub fn element_type(&self) -> &Type {
         &self.element_type
@@ -124,6 +129,16 @@ impl MapType {
             value_required,
             value_type: Box::new(value_type),
         }
+    }
+
+    /// Get the key field ID
+    pub fn key_id(&self) -> i32 {
+        self.key_id
+    }
+
+    /// Get the value field ID
+    pub fn value_id(&self) -> i32 {
+        self.value_id
     }
 
     /// Get the key type

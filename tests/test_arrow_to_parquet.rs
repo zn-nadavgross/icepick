@@ -1,9 +1,10 @@
 use arrow::array::{Int32Array, Int64Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
 use arrow::record_batch::RecordBatch;
-use icepick::spec::{NestedField, PrimitiveType, Schema, Type};
+use icepick::arrow_convert::PARQUET_FIELD_ID_METADATA_KEY;
 use icepick::{arrow_to_parquet, FileIO};
 use parquet::basic::Compression;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 #[tokio::test]
@@ -176,21 +177,9 @@ async fn test_arrow_to_parquet_finish_data_file() {
     let op = opendal::Operator::via_iter(opendal::Scheme::Memory, []).unwrap();
     let file_io = FileIO::new(op.clone());
 
-    let iceberg_schema = Schema::builder()
-        .with_fields(vec![
-            NestedField::required_field(1, "id".to_string(), Type::Primitive(PrimitiveType::Long)),
-            NestedField::optional_field(
-                2,
-                "name".to_string(),
-                Type::Primitive(PrimitiveType::String),
-            ),
-        ])
-        .build()
-        .unwrap();
-
     let arrow_schema = Arc::new(ArrowSchema::new(vec![
-        Field::new("id", DataType::Int64, false),
-        Field::new("name", DataType::Utf8, true),
+        field_with_id("id", DataType::Int64, false, 1),
+        field_with_id("name", DataType::Utf8, true, 2),
     ]));
 
     let batch = RecordBatch::try_new(
@@ -203,7 +192,6 @@ async fn test_arrow_to_parquet_finish_data_file() {
     .unwrap();
 
     let data_file = arrow_to_parquet(&batch, "stats.parquet", &file_io)
-        .with_iceberg_schema(&iceberg_schema)
         .finish_data_file()
         .await
         .unwrap();
@@ -216,4 +204,13 @@ async fn test_arrow_to_parquet_finish_data_file() {
     assert!(data_file.upper_bounds().is_some());
 
     assert!(op.exists("stats.parquet").await.unwrap());
+}
+
+fn field_with_id(name: &str, data_type: DataType, nullable: bool, id: i32) -> Field {
+    let mut field = Field::new(name, data_type, nullable);
+    field.set_metadata(HashMap::from([(
+        PARQUET_FIELD_ID_METADATA_KEY.to_string(),
+        id.to_string(),
+    )]));
+    field
 }

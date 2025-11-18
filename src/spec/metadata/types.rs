@@ -9,6 +9,11 @@ pub struct PartitionSpec {
 }
 
 impl PartitionSpec {
+    /// Create a new partition spec
+    pub fn new(spec_id: i32, fields: Vec<PartitionField>) -> Self {
+        Self { spec_id, fields }
+    }
+
     /// Partition spec identifier
     pub fn spec_id(&self) -> i32 {
         self.spec_id
@@ -32,6 +37,21 @@ pub struct PartitionField {
 }
 
 impl PartitionField {
+    /// Create a new partition field definition
+    pub fn new(
+        field_id: i32,
+        source_id: i32,
+        transform: impl Into<String>,
+        name: impl Into<String>,
+    ) -> Self {
+        Self {
+            field_id,
+            source_id,
+            transform: transform.into(),
+            name: name.into(),
+        }
+    }
+
     pub fn field_id(&self) -> i32 {
         self.field_id
     }

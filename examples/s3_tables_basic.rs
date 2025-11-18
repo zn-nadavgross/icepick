@@ -1,11 +1,11 @@
 use anyhow::{ensure, Context, Result};
 use icepick::catalog::Catalog;
-use icepick::spec::{
-    NamespaceIdent, NestedField, PrimitiveType, Schema, TableCreation, TableIdent, Type,
+use icepick::spec::{NamespaceIdent, NestedField, PrimitiveType, Schema, TableIdent, Type};
+use icepick::{
+    AppendOnlyTableWriter, PartitionFieldConfig, PartitionTransform, S3TablesCatalog,
+    TableWriterOptions,
 };
-use icepick::writer::ParquetWriter;
-use icepick::S3TablesCatalog;
-use tracing::{info, warn};
+use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 /// Create S3 Tables catalog with SigV4 authentication
@@ -80,93 +80,37 @@ async fn main() -> Result<()> {
     info!("✓ Connected to S3 Tables catalog");
 
     let namespace = NamespaceIdent::new(vec![namespace_name.clone()]);
-
-    // Try to create the namespace
-    info!("Creating namespace: {}", namespace_name);
-    match catalog
-        .create_namespace(&namespace, Default::default())
-        .await
-    {
-        Ok(_) => info!("✓ Created namespace: {}", namespace_name),
-        Err(e) if e.to_string().contains("lready exists") || e.to_string().contains("Conflict") => {
-            info!("ℹ Namespace already exists: {}", namespace_name)
-        }
-        Err(e) => {
-            warn!("Failed to create namespace: {}", e);
-            info!("ℹ Attempting to continue with existing namespace");
-        }
-    }
+    let table_ident = TableIdent::new(namespace.clone(), table_name.clone());
 
     let schema = build_schema()?;
-
-    // Try to load the table first, create if it doesn't exist
-    let table_ident = TableIdent::new(namespace.clone(), table_name.clone());
-    let table = match catalog.load_table(&table_ident).await {
-        Ok(table) => {
-            info!("✓ Loaded existing table: {}.{}", namespace_name, table_name);
-            table
-        }
-        Err(_) => {
-            let table_creation = TableCreation::builder()
-                .with_name(table_name.clone())
-                .with_schema(schema.clone())
-                .build()
-                .context("Failed to build table creation")?;
-
-            let table = catalog
-                .create_table(&namespace, table_creation)
-                .await
-                .context(format!("Failed to create table '{}'", table_name))?;
-
-            info!("✓ Created table: {}.{}", namespace_name, table_name);
-            table
-        }
-    };
-
     let batch = create_sample_data(&schema)?;
 
-    // Create simple icepick ParquetWriter
-    let mut writer = ParquetWriter::new(
-        table
-            .metadata()
-            .current_schema()
-            .context("Failed to load current schema")?
-            .clone(),
-    )
-    .context("Failed to create Parquet writer")?;
+    // Configure optional partitioning (identity on id for this example)
+    let writer_options = TableWriterOptions::new().with_partition_field(PartitionFieldConfig::new(
+        "id",
+        PartitionTransform::Identity,
+    ));
 
+    let writer = AppendOnlyTableWriter::new(&catalog, namespace.clone(), table_name.clone())
+        .with_options(writer_options);
     writer
-        .write_batch(&batch)
-        .context("Failed to write batch")?;
+        .append_batch(batch.clone())
+        .await
+        .context("Failed to append batch")?;
 
-    let file_path = format!(
-        "{}/data/file-{}.parquet",
-        table.location(),
-        uuid::Uuid::new_v4()
+    info!(
+        "✓ Wrote {} rows via AppendOnlyTableWriter",
+        batch.num_rows()
     );
-
-    let data_file = writer
-        .finish(table.file_io(), file_path.clone())
-        .await
-        .context("Failed to finish writing Parquet file")?;
-
-    info!("✓ Wrote {} rows to {}", batch.num_rows(), file_path);
-
-    // Commit using icepick transaction
-    table
-        .transaction()
-        .append(vec![data_file])
-        .commit(&catalog)
-        .await
-        .context("Failed to commit transaction")?;
-
-    info!("✓ Committed snapshot to table");
 
     // Read data back
     info!("--- Reading data back ---");
 
     // Reload table to get latest metadata
-    let table = catalog.load_table(&table_ident).await?;
+    let table = catalog
+        .load_table(&table_ident)
+        .await
+        .context("Failed to load table for reading")?;
 
     // List data files
     let files = table.files().await?;

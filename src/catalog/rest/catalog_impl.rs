@@ -115,12 +115,17 @@ impl IcebergRestCatalog {
         let namespace_name = namespace.to_string();
         let url = self.url(&format!("namespaces/{}/tables", namespace_name));
 
+        let partition_spec = creation
+            .partition_spec()
+            .map(serde_json::to_value)
+            .transpose()?;
+
         let body = CreateTableRequest {
             name: creation.name().to_string(),
             schema: creation.schema().clone(),
             location: creation.location().map(String::from),
-            partition_spec: None, // Will use server defaults
-            write_order: None,    // Will use server defaults
+            partition_spec,
+            write_order: None, // Will use server defaults
             properties: if creation.properties().is_empty() {
                 None
             } else {

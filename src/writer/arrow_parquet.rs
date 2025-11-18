@@ -4,9 +4,10 @@
 //! bypassing Iceberg metadata entirely. Use this when you need to write data for external systems
 //! (Spark, DuckDB, etc.) that don't require Iceberg metadata.
 
+use crate::arrow_convert::arrow_schema_to_iceberg;
 use crate::error::{Error, Result};
 use crate::io::FileIO;
-use crate::spec::{DataFile, Schema};
+use crate::spec::DataFile;
 use crate::writer::stats::StatsCollector;
 use arrow::record_batch::RecordBatch;
 use parquet::arrow::ArrowWriter;
@@ -49,7 +50,6 @@ pub struct ArrowParquetBuilder<'a> {
     path: String,
     file_io: &'a FileIO,
     compression: Compression,
-    stats_collector: Option<StatsCollector>,
 }
 
 impl<'a> ArrowParquetBuilder<'a> {
@@ -60,7 +60,6 @@ impl<'a> ArrowParquetBuilder<'a> {
             path,
             file_io,
             compression: Compression::SNAPPY,
-            stats_collector: None,
         }
     }
 
@@ -77,16 +76,6 @@ impl<'a> ArrowParquetBuilder<'a> {
         self
     }
 
-    /// Enable Iceberg statistics collection so the builder can return a `DataFile`.
-    ///
-    /// This requires the Iceberg table schema so field IDs can be recorded correctly.
-    /// Use [`finish_data_file`](Self::finish_data_file) to write the file and obtain
-    /// a fully populated `DataFile`.
-    pub fn with_iceberg_schema(mut self, schema: &Schema) -> Self {
-        self.stats_collector = Some(StatsCollector::new(schema));
-        self
-    }
-
     /// Execute the write operation
     ///
     /// Writes the RecordBatch to an in-memory Parquet file, then uploads to S3.
@@ -98,14 +87,14 @@ impl<'a> ArrowParquetBuilder<'a> {
 
     /// Finish the write, returning a `DataFile` populated with Iceberg statistics.
     ///
-    /// Call [`with_iceberg_schema`](Self::with_iceberg_schema) before using this method
-    /// so statistics can be tracked for manifest entries.
-    pub async fn finish_data_file(mut self) -> Result<DataFile> {
-        let mut stats_collector = self.stats_collector.take().ok_or_else(|| {
-            Error::invalid_input(
-                "finish_data_file() requires with_iceberg_schema() to be called first",
-            )
-        })?;
+    /// The Arrow schema must include `PARQUET:field_id` metadata on every field so
+    /// Iceberg field IDs can be recovered deterministically.
+    pub async fn finish_data_file(self) -> Result<DataFile> {
+        let arrow_schema = self.batch.schema();
+        // Validate that the Arrow schema can be represented in Iceberg form.
+        arrow_schema_to_iceberg(arrow_schema.as_ref())?;
+
+        let mut stats_collector = StatsCollector::new(arrow_schema.as_ref())?;
         stats_collector.collect(self.batch)?;
         let stats = stats_collector.finalize();
 

@@ -70,7 +70,8 @@ pub(crate) struct R2Config {
 }
 
 /// Authentication provider trait for signing/authenticating requests (internal)
-#[async_trait]
+#[cfg_attr(not(target_family = "wasm"), async_trait)]
+#[cfg_attr(target_family = "wasm", async_trait(?Send))]
 pub(crate) trait AuthProvider: Send + Sync + std::fmt::Debug {
     /// Sign or authenticate an HTTP request
     async fn sign_request(&self, request: reqwest::Request) -> Result<reqwest::Request>;

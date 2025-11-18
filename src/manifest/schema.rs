@@ -248,32 +248,38 @@ pub fn manifest_list_schema_v2() -> Result<Schema, apache_avro::Error> {
     },
     {
       "name": "added_files_count",
-      "type": "int",
+      "type": ["null", "int"],
+      "default": null,
       "field-id": 504
     },
     {
       "name": "existing_files_count",
-      "type": "int",
+      "type": ["null", "int"],
+      "default": null,
       "field-id": 505
     },
     {
       "name": "deleted_files_count",
-      "type": "int",
+      "type": ["null", "int"],
+      "default": null,
       "field-id": 506
     },
     {
       "name": "added_rows_count",
-      "type": "long",
+      "type": ["null", "long"],
+      "default": null,
       "field-id": 512
     },
     {
       "name": "existing_rows_count",
-      "type": "long",
+      "type": ["null", "long"],
+      "default": null,
       "field-id": 513
     },
     {
       "name": "deleted_rows_count",
-      "type": "long",
+      "type": ["null", "long"],
+      "default": null,
       "field-id": 514
     },
     {

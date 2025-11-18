@@ -39,6 +39,14 @@ pub struct ManifestListEntry {
     pub deleted_rows_count: i64,
 }
 
+fn int_union(value: i32) -> Value {
+    Value::Union(1, Box::new(Value::Int(value)))
+}
+
+fn long_union(value: i64) -> Value {
+    Value::Union(1, Box::new(Value::Long(value)))
+}
+
 /// Write a manifest file containing data file entries
 ///
 /// Returns the number of bytes written
@@ -131,27 +139,27 @@ pub async fn write_manifest_list(
             ),
             (
                 "added_files_count".to_string(),
-                Value::Int(entry.added_files_count),
+                int_union(entry.added_files_count),
             ),
             (
                 "existing_files_count".to_string(),
-                Value::Int(entry.existing_files_count),
+                int_union(entry.existing_files_count),
             ),
             (
                 "deleted_files_count".to_string(),
-                Value::Int(entry.deleted_files_count),
+                int_union(entry.deleted_files_count),
             ),
             (
                 "added_rows_count".to_string(),
-                Value::Long(entry.added_rows_count),
+                long_union(entry.added_rows_count),
             ),
             (
                 "existing_rows_count".to_string(),
-                Value::Long(entry.existing_rows_count),
+                long_union(entry.existing_rows_count),
             ),
             (
                 "deleted_rows_count".to_string(),
-                Value::Long(entry.deleted_rows_count),
+                long_union(entry.deleted_rows_count),
             ),
             (
                 "partitions".to_string(),

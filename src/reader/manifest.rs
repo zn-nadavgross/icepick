@@ -2,6 +2,7 @@
 
 use crate::error::{Error, Result};
 use crate::io::FileIO;
+use apache_avro::types::Value;
 use apache_avro::Reader as AvroReader;
 
 /// Information about a data file discovered from manifests
@@ -51,6 +52,22 @@ pub struct ManifestFileInfo {
 /// Reads manifest list files
 pub struct ManifestListReader;
 
+fn extract_int(value: &Value) -> Option<i32> {
+    match value {
+        Value::Int(n) => Some(*n),
+        Value::Union(_, boxed) => extract_int(boxed),
+        _ => None,
+    }
+}
+
+fn extract_long(value: &Value) -> Option<i64> {
+    match value {
+        Value::Long(n) => Some(*n),
+        Value::Union(_, boxed) => extract_long(boxed),
+        _ => None,
+    }
+}
+
 impl ManifestListReader {
     /// Read a manifest list and return the paths to manifest files
     pub async fn read(file_io: &FileIO, manifest_list_path: &str) -> Result<Vec<String>> {
@@ -98,7 +115,7 @@ impl ManifestListReader {
                 Error::invalid_input(format!("Failed to parse manifest list entry: {}", e))
             })?;
 
-            if let apache_avro::types::Value::Record(fields) = value {
+            if let Value::Record(fields) = value {
                 let mut info = ManifestFileInfo {
                     manifest_path: String::new(),
                     manifest_length: 0,
@@ -118,67 +135,67 @@ impl ManifestListReader {
                 for (name, field_value) in fields {
                     match name.as_str() {
                         "manifest_path" => {
-                            if let apache_avro::types::Value::String(s) = field_value {
+                            if let Value::String(s) = field_value {
                                 info.manifest_path = s;
                             }
                         }
                         "manifest_length" => {
-                            if let apache_avro::types::Value::Long(n) = field_value {
+                            if let Value::Long(n) = field_value {
                                 info.manifest_length = n;
                             }
                         }
                         "partition_spec_id" => {
-                            if let apache_avro::types::Value::Int(n) = field_value {
+                            if let Value::Int(n) = field_value {
                                 info.partition_spec_id = n;
                             }
                         }
                         "content" => {
-                            if let apache_avro::types::Value::Int(n) = field_value {
+                            if let Value::Int(n) = field_value {
                                 info.content = n;
                             }
                         }
                         "sequence_number" => {
-                            if let apache_avro::types::Value::Long(n) = field_value {
+                            if let Value::Long(n) = field_value {
                                 info.sequence_number = n;
                             }
                         }
                         "min_sequence_number" => {
-                            if let apache_avro::types::Value::Long(n) = field_value {
+                            if let Value::Long(n) = field_value {
                                 info.min_sequence_number = n;
                             }
                         }
                         "added_snapshot_id" => {
-                            if let apache_avro::types::Value::Long(n) = field_value {
+                            if let Value::Long(n) = field_value {
                                 info.added_snapshot_id = n;
                             }
                         }
                         "added_files_count" => {
-                            if let apache_avro::types::Value::Int(n) = field_value {
+                            if let Some(n) = extract_int(&field_value) {
                                 info.added_files_count = n;
                             }
                         }
                         "existing_files_count" => {
-                            if let apache_avro::types::Value::Int(n) = field_value {
+                            if let Some(n) = extract_int(&field_value) {
                                 info.existing_files_count = n;
                             }
                         }
                         "deleted_files_count" => {
-                            if let apache_avro::types::Value::Int(n) = field_value {
+                            if let Some(n) = extract_int(&field_value) {
                                 info.deleted_files_count = n;
                             }
                         }
                         "added_rows_count" => {
-                            if let apache_avro::types::Value::Long(n) = field_value {
+                            if let Some(n) = extract_long(&field_value) {
                                 info.added_rows_count = n;
                             }
                         }
                         "existing_rows_count" => {
-                            if let apache_avro::types::Value::Long(n) = field_value {
+                            if let Some(n) = extract_long(&field_value) {
                                 info.existing_rows_count = n;
                             }
                         }
                         "deleted_rows_count" => {
-                            if let apache_avro::types::Value::Long(n) = field_value {
+                            if let Some(n) = extract_long(&field_value) {
                                 info.deleted_rows_count = n;
                             }
                         }

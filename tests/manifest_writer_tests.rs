@@ -1,7 +1,6 @@
 use apache_avro::types::Value;
-use apache_avro::Writer;
+use apache_avro::{Schema, Writer};
 use icepick::io::FileIO;
-use icepick::manifest::schema::manifest_list_schema_v2;
 use icepick::manifest::writer::{write_manifest, write_manifest_list, ManifestListEntry};
 use icepick::reader::ManifestListReader;
 use icepick::spec::DataFile;
@@ -88,7 +87,9 @@ async fn manifest_list_reader_handles_null_counts() {
     let op = Operator::via_iter(opendal::Scheme::Memory, []).unwrap();
     let file_io = FileIO::new(op.clone());
 
-    let schema = manifest_list_schema_v2().unwrap();
+    // Use the legacy schema so we can write nullable count fields and ensure the reader still
+    // tolerates them.
+    let schema = legacy_manifest_list_schema_with_nullable_counts();
     let mut writer = Writer::new(&schema, Vec::new());
 
     writer
@@ -154,4 +155,31 @@ async fn manifest_list_reader_handles_null_counts() {
     assert_eq!(parsed.added_rows_count, 0);
     assert_eq!(parsed.existing_rows_count, 0);
     assert_eq!(parsed.deleted_rows_count, 0);
+}
+
+fn legacy_manifest_list_schema_with_nullable_counts() -> Schema {
+    Schema::parse_str(
+        r#"{
+  "type": "record",
+  "name": "manifest_file",
+  "fields": [
+    {"name": "manifest_path", "type": "string"},
+    {"name": "manifest_length", "type": "long"},
+    {"name": "partition_spec_id", "type": "int"},
+    {"name": "content", "type": "int"},
+    {"name": "sequence_number", "type": "long"},
+    {"name": "min_sequence_number", "type": "long"},
+    {"name": "added_snapshot_id", "type": "long"},
+    {"name": "added_files_count", "type": ["null", "int"], "default": null},
+    {"name": "existing_files_count", "type": ["null", "int"], "default": null},
+    {"name": "deleted_files_count", "type": ["null", "int"], "default": null},
+    {"name": "added_rows_count", "type": ["null", "long"], "default": null},
+    {"name": "existing_rows_count", "type": ["null", "long"], "default": null},
+    {"name": "deleted_rows_count", "type": ["null", "long"], "default": null},
+    {"name": "partitions", "type": ["null", {"type": "array", "items": "int"}], "default": null},
+    {"name": "key_metadata", "type": ["null", "bytes"], "default": null}
+  ]
+}"#,
+    )
+    .expect("legacy manifest schema should parse")
 }

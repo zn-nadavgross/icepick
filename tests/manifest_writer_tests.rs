@@ -157,6 +157,75 @@ async fn manifest_list_reader_handles_null_counts() {
     assert_eq!(parsed.deleted_rows_count, 0);
 }
 
+#[tokio::test]
+async fn test_manifest_list_partitions_field_is_empty_array_for_unpartitioned_tables() {
+    let op = Operator::via_iter(opendal::Scheme::Memory, []).unwrap();
+    let file_io = FileIO::new(op.clone());
+
+    let entry = ManifestListEntry {
+        manifest_path: "metadata/test-m0.avro".to_string(),
+        manifest_length: 1000,
+        partition_spec_id: 0, // unpartitioned table
+        content: 0,
+        sequence_number: 1,
+        min_sequence_number: 1,
+        added_snapshot_id: 1,
+        added_files_count: 5,
+        existing_files_count: 0,
+        deleted_files_count: 0,
+        added_rows_count: 500,
+        existing_rows_count: 0,
+        deleted_rows_count: 0,
+    };
+
+    let list_path = "metadata/snap-1-partitions-test.avro";
+    write_manifest_list(&file_io, list_path, vec![entry])
+        .await
+        .unwrap();
+
+    // Read the raw Avro and verify partitions field is an empty array, not null
+    let bytes = op.read(list_path).await.unwrap();
+    let bytes_slice = bytes.to_vec();
+    let reader = apache_avro::Reader::new(&bytes_slice[..]).unwrap();
+
+    for record_result in reader {
+        let record = record_result.unwrap();
+
+        if let Value::Record(fields) = record {
+            let partitions_field = fields
+                .iter()
+                .find(|(name, _)| name == "partitions")
+                .map(|(_, value)| value);
+
+            // For unpartitioned tables (partition_spec_id=0), partitions should be
+            // an empty array, NOT null. This is required for DuckDB compatibility.
+            // DuckDB crashes when partitions is null because it tries to access
+            // integer fields within the partition summary structure.
+            match partitions_field {
+                Some(Value::Union(1, boxed_value)) => {
+                    // Union variant 1 is the array
+                    match &**boxed_value {
+                        Value::Array(arr) => {
+                            assert!(
+                                arr.is_empty(),
+                                "partitions array should be empty for unpartitioned tables"
+                            );
+                        }
+                        _ => panic!("partitions union variant 1 should contain an Array"),
+                    }
+                }
+                Some(Value::Union(0, boxed_value)) => {
+                    panic!(
+                        "partitions should be an empty array, not null (variant 0). Found: {:?}",
+                        boxed_value
+                    );
+                }
+                _ => panic!("partitions field not found or has unexpected structure"),
+            }
+        }
+    }
+}
+
 fn legacy_manifest_list_schema_with_nullable_counts() -> Schema {
     Schema::parse_str(
         r#"{

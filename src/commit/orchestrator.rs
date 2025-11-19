@@ -139,8 +139,11 @@ pub async fn try_commit(
     let new_manifest_entry = ManifestListEntry {
         manifest_path: manifest_file_path.clone(),
         manifest_length: manifest_bytes,
-        partition_spec_id: 0, // Unpartitioned
-        content: 0,           // 0 = DATA
+        // TODO: Support partitioned tables
+        // Currently hardcoded to 0 (unpartitioned). When partition support is added,
+        // this should use the actual partition spec ID from the table metadata.
+        partition_spec_id: 0,
+        content: 0, // 0 = DATA
         sequence_number,
         min_sequence_number: sequence_number,
         added_snapshot_id: snapshot_id,

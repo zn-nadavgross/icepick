@@ -7,11 +7,11 @@ use std::collections::HashMap;
 
 /// Convert a DataFile to an Avro Record value for manifest entry
 pub fn data_file_to_avro(data_file: &DataFile) -> Result<Value> {
-    let partition_map: HashMap<String, Value> = data_file
-        .partition()
-        .iter()
-        .map(|(k, v)| (k.clone(), Value::String(v.clone())))
-        .collect();
+    // Partition is a struct/record in Iceberg spec (field 102)
+    // For unpartitioned tables (partition_spec_id=0), it's an empty record
+    // TODO: When partition support is added, populate fields based on partition spec
+    let partition_record = Value::Record(vec![]);
+
     let mut fields = vec![
         ("content".to_string(), Value::Int(0)), // 0 = DATA
         (
@@ -22,7 +22,7 @@ pub fn data_file_to_avro(data_file: &DataFile) -> Result<Value> {
             "file_format".to_string(),
             Value::String(data_file.file_format().to_string()),
         ),
-        ("partition".to_string(), Value::Map(partition_map)),
+        ("partition".to_string(), partition_record),
         (
             "record_count".to_string(),
             Value::Long(data_file.record_count()),

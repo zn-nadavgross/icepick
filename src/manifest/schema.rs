@@ -64,8 +64,9 @@ pub fn manifest_entry_schema_v2() -> Result<Schema, apache_avro::Error> {
           {
             "name": "partition",
             "type": {
-              "type": "map",
-              "values": "string"
+              "type": "record",
+              "name": "r102",
+              "fields": []
             },
             "field-id": 102
           },

@@ -9,6 +9,7 @@ use super::helpers;
 use super::types::*;
 use super::IcebergRestCatalog;
 use reqwest::StatusCode;
+use serde::de::DeserializeOwned;
 use tracing::warn;
 
 // Private helper functions containing the actual implementation
@@ -25,27 +26,17 @@ impl IcebergRestCatalog {
 
         let body = CreateNamespaceRequest {
             namespace: vec![namespace_name],
-            properties: properties.clone(),
+            properties,
         };
 
-        let req = self
-            .http_client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .build()
-            .map_err(|e| {
-                crate::error::Error::io_error(format!("Failed to build request: {}", e))
-            })?;
+        let req = self.build_request(
+            self.http_client
+                .post(&url)
+                .header("Content-Type", "application/json")
+                .json(&body),
+        )?;
 
-        let response = self
-            .send_request(req)
-            .await
-            .map_err(helpers::from_catalog_error)?;
-        let _json_value = self
-            .handle_response(response)
-            .await
-            .map_err(helpers::from_catalog_error)?;
+        let _ = self.execute_request(req).await?;
 
         Ok(())
     }
@@ -57,14 +48,11 @@ impl IcebergRestCatalog {
         let namespace_name = namespace.to_string();
         let url = self.url(&format!("namespaces/{}", namespace_name));
 
-        let req = self
-            .http_client
-            .get(&url)
-            .header("Accept", "application/json")
-            .build()
-            .map_err(|e| {
-                crate::error::Error::io_error(format!("Failed to build request: {}", e))
-            })?;
+        let req = self.build_request(
+            self.http_client
+                .get(&url)
+                .header("Accept", "application/json"),
+        )?;
 
         let response = self
             .send_request(req)
@@ -91,28 +79,13 @@ impl IcebergRestCatalog {
         let namespace_name = namespace.to_string();
         let url = self.url(&format!("namespaces/{}/tables", namespace_name));
 
-        let req = self
-            .http_client
-            .get(&url)
-            .header("Accept", "application/json")
-            .build()
-            .map_err(|e| {
-                crate::error::Error::io_error(format!("Failed to build request: {}", e))
-            })?;
+        let req = self.build_request(
+            self.http_client
+                .get(&url)
+                .header("Accept", "application/json"),
+        )?;
 
-        let response = self
-            .send_request(req)
-            .await
-            .map_err(helpers::from_catalog_error)?;
-
-        let json_value = self
-            .handle_response(response)
-            .await
-            .map_err(helpers::from_catalog_error)?;
-
-        let tables: ListTablesResponse = serde_json::from_value(json_value).map_err(|e| {
-            crate::error::Error::invalid_input(format!("Failed to parse tables response: {}", e))
-        })?;
+        let tables: ListTablesResponse = self.execute_and_parse(req, "tables response").await?;
 
         let mut table_idents = Vec::with_capacity(tables.identifiers.len());
         for ident in tables.identifiers {
@@ -142,12 +115,17 @@ impl IcebergRestCatalog {
         let namespace_name = namespace.to_string();
         let url = self.url(&format!("namespaces/{}/tables", namespace_name));
 
+        let partition_spec = creation
+            .partition_spec()
+            .map(serde_json::to_value)
+            .transpose()?;
+
         let body = CreateTableRequest {
             name: creation.name().to_string(),
             schema: creation.schema().clone(),
             location: creation.location().map(String::from),
-            partition_spec: None, // Will use server defaults
-            write_order: None,    // Will use server defaults
+            partition_spec,
+            write_order: None, // Will use server defaults
             properties: if creation.properties().is_empty() {
                 None
             } else {
@@ -156,29 +134,15 @@ impl IcebergRestCatalog {
             stage_create: Some(false),
         };
 
-        let req = self
-            .http_client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .build()
-            .map_err(|e| {
-                crate::error::Error::io_error(format!("Failed to build request: {}", e))
-            })?;
-
-        let response = self
-            .send_request(req)
-            .await
-            .map_err(helpers::from_catalog_error)?;
-        let json_value = self
-            .handle_response(response)
-            .await
-            .map_err(helpers::from_catalog_error)?;
+        let req = self.build_request(
+            self.http_client
+                .post(&url)
+                .header("Content-Type", "application/json")
+                .json(&body),
+        )?;
 
         let table_response: CreateTableResponse =
-            serde_json::from_value(json_value).map_err(|e| {
-                crate::error::Error::invalid_input(format!("Failed to parse table response: {}", e))
-            })?;
+            self.execute_and_parse(req, "table response").await?;
 
         let table_ident =
             crate::spec::TableIdent::new(namespace.clone(), creation.name().to_string());
@@ -197,28 +161,14 @@ impl IcebergRestCatalog {
         let namespace_name = table.namespace().to_string();
         let url = self.table_url(&namespace_name, table.name(), true);
 
-        let req = self
-            .http_client
-            .get(&url)
-            .header("Accept", "application/json")
-            .build()
-            .map_err(|e| {
-                crate::error::Error::io_error(format!("Failed to build request: {}", e))
-            })?;
-
-        let response = self
-            .send_request(req)
-            .await
-            .map_err(helpers::from_catalog_error)?;
-        let json_value = self
-            .handle_response(response)
-            .await
-            .map_err(helpers::from_catalog_error)?;
+        let req = self.build_request(
+            self.http_client
+                .get(&url)
+                .header("Accept", "application/json"),
+        )?;
 
         let table_response: LoadTableResponse =
-            serde_json::from_value(json_value).map_err(|e| {
-                crate::error::Error::invalid_input(format!("Failed to parse table response: {}", e))
-            })?;
+            self.execute_and_parse(req, "table response").await?;
 
         helpers::build_table(
             table.clone(),
@@ -239,23 +189,13 @@ impl IcebergRestCatalog {
             table.name()
         ));
 
-        let req = self
-            .http_client
-            .delete(&url)
-            .header("Accept", "application/json")
-            .build()
-            .map_err(|e| {
-                crate::error::Error::io_error(format!("Failed to build request: {}", e))
-            })?;
+        let req = self.build_request(
+            self.http_client
+                .delete(&url)
+                .header("Accept", "application/json"),
+        )?;
 
-        let response = self
-            .send_request(req)
-            .await
-            .map_err(helpers::from_catalog_error)?;
-
-        self.handle_response(response)
-            .await
-            .map_err(helpers::from_catalog_error)?;
+        let _ = self.execute_request(req).await?;
 
         Ok(())
     }
@@ -349,7 +289,15 @@ impl IcebergRestCatalog {
             }],
         };
 
-        // 4. Send to REST endpoint, with fallback for catalogs that don't support metadata CAS
+        // We use snapshot commit because it's needed for S3 Tables and R2 Catalog
+        // as of November 2025
+        if !commit_table_enabled() {
+            return self
+                .legacy_snapshot_commit(identifier, snapshot_id_requirement, new_metadata)
+                .await;
+        }
+
+        // This is the "preferred API" but not well-supported by R2 Catalog, S3 Tables or Nessie
         match self.commit_table(identifier, request).await {
             Ok(_) => Ok(()),
             Err(err) => {
@@ -357,9 +305,10 @@ impl IcebergRestCatalog {
                 let is_unsupported = match &err {
                     crate::catalog::CatalogError::InvalidRequest(ref msg)
                     | crate::catalog::CatalogError::Unexpected(ref msg) => {
-                        msg.contains("unsupported_table_update")
-                            || msg.contains("unknown variant `set-current-table-metadata`")
-                            || msg.contains("set-current-table-metadata")
+                        contains_metadata_error(msg)
+                    }
+                    crate::catalog::CatalogError::ServerError { message, .. } => {
+                        contains_metadata_error(message)
                     }
                     _ => false,
                 };
@@ -420,5 +369,67 @@ impl IcebergRestCatalog {
             .await
             .map_err(helpers::from_catalog_error)?;
         Ok(())
+    }
+
+    fn build_request(
+        &self,
+        builder: reqwest::RequestBuilder,
+    ) -> crate::error::Result<reqwest::Request> {
+        builder
+            .build()
+            .map_err(|e| crate::error::Error::io_error(format!("Failed to build request: {}", e)))
+    }
+
+    async fn execute_request(
+        &self,
+        req: reqwest::Request,
+    ) -> crate::error::Result<serde_json::Value> {
+        let response = self
+            .send_request(req)
+            .await
+            .map_err(helpers::from_catalog_error)?;
+        self.handle_response(response)
+            .await
+            .map_err(helpers::from_catalog_error)
+    }
+
+    async fn execute_and_parse<T: DeserializeOwned>(
+        &self,
+        req: reqwest::Request,
+        context: &str,
+    ) -> crate::error::Result<T> {
+        let json_value = self.execute_request(req).await?;
+        serde_json::from_value(json_value).map_err(|e| {
+            crate::error::Error::invalid_input(format!("Failed to parse {context}: {}", e))
+        })
+    }
+}
+
+fn contains_metadata_error(message: &str) -> bool {
+    message.contains("unsupported_table_update")
+        || message.contains("unknown variant `set-current-table-metadata`")
+        || message.contains("type id 'set-current-table-metadata'")
+        || message.contains("set-current-table-metadata")
+}
+
+#[cfg_attr(target_family = "wasm", allow(dead_code))]
+const COMMIT_TABLE_ENV: &str = "ICEPICK_USE_COMMIT_TABLE";
+
+#[cfg(target_family = "wasm")]
+fn commit_table_enabled() -> bool {
+    false
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn commit_table_enabled() -> bool {
+    match std::env::var(COMMIT_TABLE_ENV) {
+        Ok(value) => {
+            let normalized = value.trim().to_ascii_lowercase();
+            matches!(
+                normalized.as_str(),
+                "1" | "true" | "yes" | "on" | "enable" | "enabled"
+            )
+        }
+        Err(_) => false,
     }
 }

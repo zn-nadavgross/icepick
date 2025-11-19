@@ -1,7 +1,7 @@
 //! Table creation specification
 
 use crate::error::Result;
-use crate::spec::Schema;
+use crate::spec::{PartitionSpec, Schema};
 use std::collections::HashMap;
 
 /// Specification for creating a new table
@@ -11,6 +11,7 @@ pub struct TableCreation {
     schema: Schema,
     location: Option<String>,
     properties: HashMap<String, String>,
+    partition_spec: Option<PartitionSpec>,
 }
 
 impl TableCreation {
@@ -38,6 +39,11 @@ impl TableCreation {
     pub fn properties(&self) -> &HashMap<String, String> {
         &self.properties
     }
+
+    /// Get optional partition spec
+    pub fn partition_spec(&self) -> Option<&PartitionSpec> {
+        self.partition_spec.as_ref()
+    }
 }
 
 /// Builder for TableCreation
@@ -47,6 +53,7 @@ pub struct TableCreationBuilder {
     schema: Option<Schema>,
     location: Option<String>,
     properties: HashMap<String, String>,
+    partition_spec: Option<PartitionSpec>,
 }
 
 impl TableCreationBuilder {
@@ -74,6 +81,12 @@ impl TableCreationBuilder {
         self
     }
 
+    /// Set the partition spec
+    pub fn with_partition_spec(mut self, spec: PartitionSpec) -> Self {
+        self.partition_spec = Some(spec);
+        self
+    }
+
     /// Build TableCreation
     pub fn build(self) -> Result<TableCreation> {
         let name = self
@@ -88,6 +101,7 @@ impl TableCreationBuilder {
             schema,
             location: self.location,
             properties: self.properties,
+            partition_spec: self.partition_spec,
         })
     }
 }

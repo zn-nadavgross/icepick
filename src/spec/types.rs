@@ -1,46 +1,11 @@
 //! Iceberg data types
 //! Vendored from iceberg-rust v0.7.0
 
-use serde::{Deserialize, Serialize};
+mod primitive;
 
-/// Primitive data types in Iceberg
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum PrimitiveType {
-    /// True or false
-    Boolean,
-    /// 32-bit signed integer
-    Int,
-    /// 64-bit signed integer
-    Long,
-    /// 32-bit IEEE 754 floating point
-    Float,
-    /// 64-bit IEEE 754 floating point
-    Double,
-    /// Fixed-point decimal
-    Decimal {
-        /// Precision (total number of digits)
-        precision: u32,
-        /// Scale (digits after decimal point)
-        scale: u32,
-    },
-    /// Calendar date without timezone
-    Date,
-    /// Time of day without timezone (microsecond precision)
-    Time,
-    /// Timestamp without timezone (microsecond precision)
-    Timestamp,
-    /// Timestamp with timezone (microsecond precision)
-    Timestamptz,
-    /// Variable-length string
-    String,
-    /// UUID (16 bytes)
-    Uuid,
-    /// Fixed-length byte array
-    Fixed(u64),
-    /// Variable-length byte array
-    Binary,
-}
+pub use primitive::PrimitiveType;
+
+use serde::{Deserialize, Serialize};
 
 /// Iceberg type - either primitive or nested
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -93,8 +58,13 @@ impl StructType {
 /// Placeholder for list type
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ListType {
+    #[serde(rename = "type")]
+    r#type: String,
+    #[serde(rename = "element-id")]
     element_id: i32,
+    #[serde(rename = "element-required")]
     element_required: bool,
+    #[serde(rename = "element")]
     element_type: Box<Type>,
 }
 
@@ -102,10 +72,16 @@ impl ListType {
     /// Construct a new list type
     pub fn new(element_id: i32, element_required: bool, element_type: Type) -> Self {
         Self {
+            r#type: "list".to_string(),
             element_id,
             element_required,
             element_type: Box::new(element_type),
         }
+    }
+
+    /// Get the element field ID
+    pub fn element_id(&self) -> i32 {
+        self.element_id
     }
 
     /// Get the element type
@@ -122,10 +98,17 @@ impl ListType {
 /// Placeholder for map type
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MapType {
+    #[serde(rename = "type")]
+    r#type: String,
+    #[serde(rename = "key-id")]
     key_id: i32,
+    #[serde(rename = "key")]
     key_type: Box<Type>,
+    #[serde(rename = "value-id")]
     value_id: i32,
+    #[serde(rename = "value-required")]
     value_required: bool,
+    #[serde(rename = "value")]
     value_type: Box<Type>,
 }
 
@@ -139,12 +122,23 @@ impl MapType {
         value_type: Type,
     ) -> Self {
         Self {
+            r#type: "map".to_string(),
             key_id,
             key_type: Box::new(key_type),
             value_id,
             value_required,
             value_type: Box::new(value_type),
         }
+    }
+
+    /// Get the key field ID
+    pub fn key_id(&self) -> i32 {
+        self.key_id
+    }
+
+    /// Get the value field ID
+    pub fn value_id(&self) -> i32 {
+        self.value_id
     }
 
     /// Get the key type

@@ -4,8 +4,8 @@
 //! This catalog uses bearer token authentication and supports both native and WASM platforms.
 
 use crate::catalog::rest::IcebergRestCatalog;
-use crate::catalog::{Catalog, CatalogOptions};
-use crate::error::{Error, Result};
+use crate::catalog::{map_catalog_error, Catalog, CatalogOptions};
+use crate::error::Result;
 use crate::spec::{NamespaceIdent, TableCreation, TableIdent};
 use crate::table::Table;
 use async_trait::async_trait;
@@ -139,23 +139,6 @@ impl R2Catalog {
         .map_err(map_catalog_error)?;
 
         Ok(Self { inner })
-    }
-}
-
-fn map_catalog_error(e: crate::catalog::CatalogError) -> Error {
-    match e {
-        #[cfg(not(target_family = "wasm"))]
-        crate::catalog::CatalogError::InvalidArn(msg) => Error::invalid_arn(msg),
-        crate::catalog::CatalogError::AuthError(msg) => Error::unauthorized(msg),
-        crate::catalog::CatalogError::HttpError(msg) => Error::unexpected(msg),
-        crate::catalog::CatalogError::ServerError { status, message } => {
-            Error::server_error(status, message)
-        }
-        crate::catalog::CatalogError::Network(err) => Error::NetworkError { source: err },
-        crate::catalog::CatalogError::NotFound(msg) => Error::not_found(msg),
-        crate::catalog::CatalogError::Conflict(msg) => Error::conflict(msg),
-        crate::catalog::CatalogError::InvalidRequest(msg) => Error::invalid_request(msg),
-        crate::catalog::CatalogError::Unexpected(msg) => Error::unexpected(msg),
     }
 }
 

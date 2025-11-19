@@ -4,8 +4,11 @@
 //! bypassing Iceberg metadata entirely. Use this when you need to write data for external systems
 //! (Spark, DuckDB, etc.) that don't require Iceberg metadata.
 
+use crate::arrow_convert::arrow_schema_to_iceberg;
 use crate::error::{Error, Result};
 use crate::io::FileIO;
+use crate::spec::DataFile;
+use crate::writer::stats::StatsCollector;
 use arrow::record_batch::RecordBatch;
 use parquet::arrow::ArrowWriter;
 use parquet::basic::Compression;
@@ -78,12 +81,43 @@ impl<'a> ArrowParquetBuilder<'a> {
     /// Writes the RecordBatch to an in-memory Parquet file, then uploads to S3.
     /// The entire file is buffered in memory before upload.
     pub async fn finish(self) -> Result<()> {
-        // Create writer properties with compression
+        self.write_parquet().await?;
+        Ok(())
+    }
+
+    /// Finish the write, returning a `DataFile` populated with Iceberg statistics.
+    ///
+    /// The Arrow schema must include `PARQUET:field_id` metadata on every field so
+    /// Iceberg field IDs can be recovered deterministically.
+    pub async fn finish_data_file(self) -> Result<DataFile> {
+        let arrow_schema = self.batch.schema();
+        // Validate that the Arrow schema can be represented in Iceberg form.
+        arrow_schema_to_iceberg(arrow_schema.as_ref())?;
+
+        let mut stats_collector = StatsCollector::new(arrow_schema.as_ref())?;
+        stats_collector.collect(self.batch)?;
+        let stats = stats_collector.finalize();
+
+        let (path, file_size) = self.write_parquet().await?;
+
+        DataFile::builder()
+            .with_file_path(&path)
+            .with_file_format("PARQUET")
+            .with_record_count(stats.record_count)
+            .with_file_size_in_bytes(file_size)
+            .with_column_sizes(stats.column_sizes)
+            .with_value_counts(stats.value_counts)
+            .with_null_value_counts(stats.null_value_counts)
+            .with_lower_bounds(stats.lower_bounds)
+            .with_upper_bounds(stats.upper_bounds)
+            .build()
+    }
+
+    async fn write_parquet(self) -> Result<(String, i64)> {
         let props = WriterProperties::builder()
             .set_compression(self.compression)
             .build();
 
-        // Write Parquet to in-memory buffer
         let mut buffer = Vec::new();
         {
             let mut writer = ArrowWriter::try_new(&mut buffer, self.batch.schema(), Some(props))
@@ -100,10 +134,10 @@ impl<'a> ArrowParquetBuilder<'a> {
             })?;
         }
 
-        // Upload to S3 via FileIO
-        self.file_io.write(&self.path, buffer).await?;
-
-        Ok(())
+        let file_size = buffer.len() as i64;
+        let path = self.path;
+        self.file_io.write(&path, buffer).await?;
+        Ok((path, file_size))
     }
 }
 

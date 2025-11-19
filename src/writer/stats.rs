@@ -1,9 +1,9 @@
 //! Statistics collection for Parquet files
 
-use crate::error::Result;
-use crate::spec::Schema;
+use crate::arrow_convert::parse_parquet_field_id;
+use crate::error::{Error, Result};
 use arrow::array::Array;
-use arrow::datatypes::DataType;
+use arrow::datatypes::{DataType, Schema as ArrowSchema};
 use arrow::record_batch::RecordBatch;
 use std::collections::HashMap;
 
@@ -28,41 +28,44 @@ pub struct StatsCollector {
     column_sizes: HashMap<i32, i64>,
     value_counts: HashMap<i32, i64>,
     null_value_counts: HashMap<i32, i64>,
-    field_ids_by_name: HashMap<String, i32>,
+    field_ids: Vec<i32>,
     bounds: BoundState,
 }
 
 impl StatsCollector {
     /// Create a new stats collector
-    pub fn new(schema: &Schema) -> Self {
-        let field_ids_by_name = schema
-            .fields()
-            .iter()
-            .map(|field| (field.name().to_string(), field.id()))
-            .collect();
+    pub fn new(schema: &ArrowSchema) -> Result<Self> {
+        let mut field_ids = Vec::with_capacity(schema.fields().len());
+        for field in schema.fields() {
+            field_ids.push(parse_parquet_field_id(field)?);
+        }
 
-        Self {
+        Ok(Self {
             record_count: 0,
             column_sizes: HashMap::new(),
             value_counts: HashMap::new(),
             null_value_counts: HashMap::new(),
-            field_ids_by_name,
+            field_ids,
             bounds: BoundState::new(),
-        }
+        })
     }
 
     /// Collect statistics from a record batch
     pub fn collect(&mut self, batch: &RecordBatch) -> Result<()> {
+        if batch.num_columns() != self.field_ids.len() {
+            return Err(Error::invalid_input(format!(
+                "RecordBatch columns ({}) do not match schema field count ({})",
+                batch.num_columns(),
+                self.field_ids.len()
+            )));
+        }
+
         self.record_count += batch.num_rows() as i64;
 
         let schema = batch.schema();
         for (col_idx, column) in batch.columns().iter().enumerate() {
+            let field_id = self.field_ids[col_idx];
             let field = schema.field(col_idx);
-            let field_id = self
-                .field_ids_by_name
-                .get(field.name())
-                .copied()
-                .unwrap_or(col_idx as i32);
 
             // Count non-null values
             let non_null_count = column.len() - column.null_count();

@@ -153,9 +153,14 @@ pub async fn write_manifest_list(
                 "deleted_rows_count".to_string(),
                 Value::Long(entry.deleted_rows_count),
             ),
+            // TODO: Support partitioned tables
+            // Currently icepick only writes unpartitioned data (partition_spec_id=0),
+            // so partitions is always an empty array. When partition support is added,
+            // this should contain field summaries (min/max values for each partition field).
+            // Using empty array instead of null is required for DuckDB compatibility.
             (
                 "partitions".to_string(),
-                Value::Union(0, Box::new(Value::Null)),
+                Value::Union(1, Box::new(Value::Array(vec![]))),
             ),
             (
                 "key_metadata".to_string(),

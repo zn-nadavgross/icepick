@@ -64,8 +64,9 @@ pub fn manifest_entry_schema_v2() -> Result<Schema, apache_avro::Error> {
           {
             "name": "partition",
             "type": {
-              "type": "map",
-              "values": "string"
+              "type": "record",
+              "name": "r102",
+              "fields": []
             },
             "field-id": 102
           },
@@ -84,10 +85,24 @@ pub fn manifest_entry_schema_v2() -> Result<Schema, apache_avro::Error> {
             "type": [
               "null",
               {
-                "type": "map",
-                "values": "long",
-                "key-id": 117,
-                "value-id": 118
+                "type": "array",
+                "logicalType": "map",
+                "items": {
+                  "type": "record",
+                  "name": "k117_v118",
+                  "fields": [
+                    {
+                      "name": "key",
+                      "type": "int",
+                      "field-id": 117
+                    },
+                    {
+                      "name": "value",
+                      "type": "long",
+                      "field-id": 118
+                    }
+                  ]
+                }
               }
             ],
             "default": null,
@@ -98,10 +113,24 @@ pub fn manifest_entry_schema_v2() -> Result<Schema, apache_avro::Error> {
             "type": [
               "null",
               {
-                "type": "map",
-                "values": "long",
-                "key-id": 119,
-                "value-id": 120
+                "type": "array",
+                "logicalType": "map",
+                "items": {
+                  "type": "record",
+                  "name": "k119_v120",
+                  "fields": [
+                    {
+                      "name": "key",
+                      "type": "int",
+                      "field-id": 119
+                    },
+                    {
+                      "name": "value",
+                      "type": "long",
+                      "field-id": 120
+                    }
+                  ]
+                }
               }
             ],
             "default": null,
@@ -112,10 +141,24 @@ pub fn manifest_entry_schema_v2() -> Result<Schema, apache_avro::Error> {
             "type": [
               "null",
               {
-                "type": "map",
-                "values": "long",
-                "key-id": 121,
-                "value-id": 122
+                "type": "array",
+                "logicalType": "map",
+                "items": {
+                  "type": "record",
+                  "name": "k121_v122",
+                  "fields": [
+                    {
+                      "name": "key",
+                      "type": "int",
+                      "field-id": 121
+                    },
+                    {
+                      "name": "value",
+                      "type": "long",
+                      "field-id": 122
+                    }
+                  ]
+                }
               }
             ],
             "default": null,
@@ -126,10 +169,24 @@ pub fn manifest_entry_schema_v2() -> Result<Schema, apache_avro::Error> {
             "type": [
               "null",
               {
-                "type": "map",
-                "values": "bytes",
-                "key-id": 126,
-                "value-id": 127
+                "type": "array",
+                "logicalType": "map",
+                "items": {
+                  "type": "record",
+                  "name": "k126_v127",
+                  "fields": [
+                    {
+                      "name": "key",
+                      "type": "int",
+                      "field-id": 126
+                    },
+                    {
+                      "name": "value",
+                      "type": "bytes",
+                      "field-id": 127
+                    }
+                  ]
+                }
               }
             ],
             "default": null,
@@ -140,20 +197,34 @@ pub fn manifest_entry_schema_v2() -> Result<Schema, apache_avro::Error> {
             "type": [
               "null",
               {
-                "type": "map",
-                "values": "bytes",
-                "key-id": 129,
-                "value-id": 130
+                "type": "array",
+                "logicalType": "map",
+                "items": {
+                  "type": "record",
+                  "name": "k129_v130",
+                  "fields": [
+                    {
+                      "name": "key",
+                      "type": "int",
+                      "field-id": 129
+                    },
+                    {
+                      "name": "value",
+                      "type": "bytes",
+                      "field-id": 130
+                    }
+                  ]
+                }
               }
             ],
             "default": null,
-            "field-id": 124
+            "field-id": 128
           },
           {
             "name": "key_metadata",
             "type": ["null", "bytes"],
             "default": null,
-            "field-id": 105
+            "field-id": 131
           },
           {
             "name": "split_offsets",
@@ -166,7 +237,7 @@ pub fn manifest_entry_schema_v2() -> Result<Schema, apache_avro::Error> {
               }
             ],
             "default": null,
-            "field-id": 106
+            "field-id": 132
           },
           {
             "name": "equality_ids",

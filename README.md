@@ -20,6 +20,7 @@
 ### Catalog Support
 - **AWS S3 Tables** — Full support with SigV4 authentication (native platforms only)
 - **Cloudflare R2 Data Catalog** — Full support with bearer token auth (WASM-compatible)
+- **Generic REST Catalog** — Build clients for any Iceberg REST endpoint (Nessie, Glue REST, custom)
 - **Direct S3 Parquet Writes** — Write Arrow data directly to S3 without Iceberg metadata
 
 ### Developer Experience
@@ -91,6 +92,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         &"namespace.table_name".parse()?
     ).await?;
 
+    Ok(())
+}
+```
+
+### Generic Iceberg REST Catalog
+
+```rust
+use icepick::{FileIO, RestCatalog};
+use opendal::Operator;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Configure your FileIO (S3, R2, filesystem, etc.)
+    let operator = Operator::via_iter(opendal::Scheme::Memory, [])?;
+    let file_io = FileIO::new(operator);
+
+    // Build a catalog for any Iceberg REST endpoint (Nessie, Glue REST, custom services)
+    let catalog = RestCatalog::builder("nessie", "https://nessie.example.com/api/iceberg")
+        .with_prefix("warehouse")
+        .with_file_io(file_io)
+        .with_bearer_token(std::env::var("NESSIE_TOKEN")?)
+        .build()?;
+
+    let table = catalog.load_table(&"namespace.table".parse()?).await?;
     Ok(())
 }
 ```

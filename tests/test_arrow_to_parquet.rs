@@ -1,8 +1,10 @@
-use arrow::array::{Int32Array, StringArray};
-use arrow::datatypes::{DataType, Field, Schema};
+use arrow::array::{Int32Array, Int64Array, StringArray};
+use arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
 use arrow::record_batch::RecordBatch;
+use icepick::arrow_convert::PARQUET_FIELD_ID_METADATA_KEY;
 use icepick::{arrow_to_parquet, FileIO};
 use parquet::basic::Compression;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 #[tokio::test]
@@ -12,7 +14,7 @@ async fn test_arrow_to_parquet_basic() {
     let file_io = FileIO::new(op);
 
     // Create sample Arrow data
-    let schema = Arc::new(Schema::new(vec![
+    let schema = Arc::new(ArrowSchema::new(vec![
         Field::new("id", DataType::Int32, false),
         Field::new("name", DataType::Utf8, false),
     ]));
@@ -51,7 +53,7 @@ async fn test_arrow_to_parquet_with_compression() {
     let op = opendal::Operator::via_iter(opendal::Scheme::Memory, []).unwrap();
     let file_io = FileIO::new(op);
 
-    let schema = Arc::new(Schema::new(vec![Field::new(
+    let schema = Arc::new(ArrowSchema::new(vec![Field::new(
         "value",
         DataType::Int32,
         false,
@@ -99,7 +101,7 @@ async fn test_arrow_to_parquet_empty_batch() {
     let file_io = FileIO::new(op);
 
     // Create empty batch (0 rows)
-    let schema = Arc::new(Schema::new(vec![
+    let schema = Arc::new(ArrowSchema::new(vec![
         Field::new("id", DataType::Int32, false),
         Field::new("name", DataType::Utf8, false),
     ]));
@@ -134,7 +136,11 @@ async fn test_arrow_to_parquet_direct_await() {
     let op = opendal::Operator::via_iter(opendal::Scheme::Memory, []).unwrap();
     let file_io = FileIO::new(op);
 
-    let schema = Arc::new(Schema::new(vec![Field::new("x", DataType::Int32, false)]));
+    let schema = Arc::new(ArrowSchema::new(vec![Field::new(
+        "x",
+        DataType::Int32,
+        false,
+    )]));
     let batch = RecordBatch::try_new(schema, vec![Arc::new(Int32Array::from(vec![42]))]).unwrap();
 
     // Test that IntoFuture works - can await directly without .finish()
@@ -150,7 +156,11 @@ async fn test_arrow_to_parquet_with_finish() {
     let op = opendal::Operator::via_iter(opendal::Scheme::Memory, []).unwrap();
     let file_io = FileIO::new(op);
 
-    let schema = Arc::new(Schema::new(vec![Field::new("x", DataType::Int32, false)]));
+    let schema = Arc::new(ArrowSchema::new(vec![Field::new(
+        "x",
+        DataType::Int32,
+        false,
+    )]));
     let batch = RecordBatch::try_new(schema, vec![Arc::new(Int32Array::from(vec![42]))]).unwrap();
 
     // Test that .finish() also works
@@ -160,4 +170,47 @@ async fn test_arrow_to_parquet_with_finish() {
         .unwrap();
 
     assert!(file_io.exists("with_finish.parquet").await.unwrap());
+}
+
+#[tokio::test]
+async fn test_arrow_to_parquet_finish_data_file() {
+    let op = opendal::Operator::via_iter(opendal::Scheme::Memory, []).unwrap();
+    let file_io = FileIO::new(op.clone());
+
+    let arrow_schema = Arc::new(ArrowSchema::new(vec![
+        field_with_id("id", DataType::Int64, false, 1),
+        field_with_id("name", DataType::Utf8, true, 2),
+    ]));
+
+    let batch = RecordBatch::try_new(
+        arrow_schema,
+        vec![
+            Arc::new(Int64Array::from(vec![1, 2, 3])),
+            Arc::new(StringArray::from(vec![Some("a"), None, Some("c")])),
+        ],
+    )
+    .unwrap();
+
+    let data_file = arrow_to_parquet(&batch, "stats.parquet", &file_io)
+        .finish_data_file()
+        .await
+        .unwrap();
+
+    assert_eq!(data_file.record_count(), 3);
+    assert!(data_file.column_sizes().is_some());
+    assert!(data_file.value_counts().is_some());
+    assert!(data_file.null_value_counts().is_some());
+    assert!(data_file.lower_bounds().is_some());
+    assert!(data_file.upper_bounds().is_some());
+
+    assert!(op.exists("stats.parquet").await.unwrap());
+}
+
+fn field_with_id(name: &str, data_type: DataType, nullable: bool, id: i32) -> Field {
+    let mut field = Field::new(name, data_type, nullable);
+    field.set_metadata(HashMap::from([(
+        PARQUET_FIELD_ID_METADATA_KEY.to_string(),
+        id.to_string(),
+    )]));
+    field
 }

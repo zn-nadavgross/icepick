@@ -71,10 +71,14 @@ pub use spec::{
 };
 pub use table::Table;
 pub use transaction::Transaction;
-pub use writer::arrow_to_parquet;
+pub use writer::{
+    arrow_to_parquet, AppendOnlyTableWriter, PartitionFieldConfig, PartitionTransform,
+    TableWriterOptions,
+};
 
 // Re-export catalog types
 pub use catalog::r2::R2Catalog;
+pub use catalog::{RestAuthProvider, RestCatalog, RestCatalogBuilder};
 
 #[cfg(not(target_family = "wasm"))]
 pub use catalog::s3_tables::S3TablesCatalog;

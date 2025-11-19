@@ -8,6 +8,7 @@ use crate::writer::stats::StatsCollector;
 use arrow::record_batch::RecordBatch;
 use parquet::arrow::ArrowWriter;
 use parquet::file::properties::WriterProperties;
+use std::sync::Arc;
 
 /// Parquet file writer
 pub struct ParquetWriter {
@@ -21,15 +22,18 @@ impl ParquetWriter {
     /// Create a new Parquet writer
     pub fn new(schema: Schema) -> Result<Self> {
         let arrow_schema = schema_to_arrow(&schema)?;
+        let stats_collector = StatsCollector::new(&arrow_schema)?;
 
         let buffer = Vec::new();
         let props = WriterProperties::builder().build();
 
-        let parquet_writer = ArrowWriter::try_new(buffer, arrow_schema.into(), Some(props))
-            .map_err(|e| Error::invalid_input(format!("Failed to create Parquet writer: {}", e)))?;
+        let parquet_writer =
+            ArrowWriter::try_new(buffer, Arc::new(arrow_schema.clone()), Some(props)).map_err(
+                |e| Error::invalid_input(format!("Failed to create Parquet writer: {}", e)),
+            )?;
 
         Ok(Self {
-            stats_collector: StatsCollector::new(&schema),
+            stats_collector,
             schema,
             parquet_writer,
         })

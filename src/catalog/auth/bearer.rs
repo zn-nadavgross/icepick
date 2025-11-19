@@ -15,7 +15,8 @@ impl BearerTokenAuthProvider {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_family = "wasm"), async_trait)]
+#[cfg_attr(target_family = "wasm", async_trait(?Send))]
 impl AuthProvider for BearerTokenAuthProvider {
     async fn sign_request(&self, mut request: reqwest::Request) -> Result<reqwest::Request> {
         // Add Authorization header with Bearer token

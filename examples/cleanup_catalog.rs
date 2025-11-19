@@ -1,8 +1,13 @@
 use anyhow::{Context, Result};
 use icepick::catalog::Catalog;
+use icepick::spec::NamespaceIdent;
 use icepick::S3TablesCatalog;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
+
+const DEFAULT_NAMESPACES: &[&str] = &[
+    "default", "test", "dev", "prod", "staging", "sandbox", "demo", "example",
+];
 
 fn init_tracing() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
@@ -17,12 +22,22 @@ async fn main() -> Result<()> {
     init_tracing();
 
     let args: Vec<String> = std::env::args().collect();
-    if args.len() != 2 {
-        eprintln!("Usage: {} <s3-tables-arn>", args[0]);
+    if args.len() < 2 {
+        eprintln!(
+            "Usage: {} <s3-tables-arn> [namespace ...]\n\n\
+             Provide namespaces explicitly or via ICEPICK_CLEANUP_NAMESPACES=\"ns1,ns2\".\n\
+             When no namespaces are supplied, a small default list is used.",
+            args[0]
+        );
         std::process::exit(1);
     }
 
     let arn = &args[1];
+    let namespaces = collect_namespaces(&args);
+    if namespaces.is_empty() {
+        warn!("No namespaces provided; nothing to clean");
+        return Ok(());
+    }
 
     info!("🔌 Connecting to S3 Tables catalog: {}", arn);
     let catalog = S3TablesCatalog::from_arn("cleanup", arn)
@@ -34,18 +49,16 @@ async fn main() -> Result<()> {
     // Note: S3 Tables doesn't support listing all namespaces via the REST API
     // We need to try common namespace names or have them provided
     warn!("⚠️  S3 Tables REST API doesn't support listing namespaces");
-    warn!("⚠️  Attempting cleanup of common namespace names...");
-
-    // Try common namespace names
-    let common_namespaces = vec![
-        "default", "test", "dev", "prod", "staging", "sandbox", "demo", "example",
-    ];
+    warn!(
+        "⚠️  Attempting cleanup of the following namespaces: {:?}",
+        namespaces
+    );
 
     let mut total_tables_deleted = 0;
     let mut total_namespaces_deleted = 0;
 
-    for ns_name in &common_namespaces {
-        let namespace = icepick::spec::NamespaceIdent::new(vec![ns_name.to_string()]);
+    for ns_name in &namespaces {
+        let namespace = NamespaceIdent::new(vec![ns_name.to_string()]);
 
         // Check if namespace exists
         match catalog.namespace_exists(&namespace).await {
@@ -108,4 +121,27 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn collect_namespaces(args: &[String]) -> Vec<String> {
+    if args.len() > 2 {
+        return args[2..]
+            .iter()
+            .map(|ns| ns.trim().to_string())
+            .filter(|ns| !ns.is_empty())
+            .collect();
+    }
+
+    if let Ok(env) = std::env::var("ICEPICK_CLEANUP_NAMESPACES") {
+        let values: Vec<String> = env
+            .split(',')
+            .map(|ns| ns.trim().to_string())
+            .filter(|ns| !ns.is_empty())
+            .collect();
+        if !values.is_empty() {
+            return values;
+        }
+    }
+
+    DEFAULT_NAMESPACES.iter().map(|ns| ns.to_string()).collect()
 }

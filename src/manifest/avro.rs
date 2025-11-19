@@ -3,7 +3,6 @@
 use crate::error::Result;
 use crate::spec::DataFile;
 use apache_avro::types::Value;
-use std::collections::HashMap;
 
 /// Convert a DataFile to an Avro Record value for manifest entry
 pub fn data_file_to_avro(data_file: &DataFile) -> Result<Value> {
@@ -33,61 +32,86 @@ pub fn data_file_to_avro(data_file: &DataFile) -> Result<Value> {
         ),
     ];
 
-    // Optional column_sizes
+    // Optional column_sizes (array of key-value records)
     let column_sizes = if let Some(sizes) = data_file.column_sizes() {
-        let map: HashMap<String, Value> = sizes
+        let array: Vec<Value> = sizes
             .iter()
-            .map(|(k, v)| (k.to_string(), Value::Long(*v)))
+            .map(|(k, v)| {
+                Value::Record(vec![
+                    ("key".to_string(), Value::Int(*k)),
+                    ("value".to_string(), Value::Long(*v)),
+                ])
+            })
             .collect();
-        Value::Union(1, Box::new(Value::Map(map)))
+        Value::Union(1, Box::new(Value::Array(array)))
     } else {
         Value::Union(0, Box::new(Value::Null))
     };
     fields.push(("column_sizes".to_string(), column_sizes));
 
-    // Optional value_counts
+    // Optional value_counts (array of key-value records)
     let value_counts = if let Some(counts) = data_file.value_counts() {
-        let map: HashMap<String, Value> = counts
+        let array: Vec<Value> = counts
             .iter()
-            .map(|(k, v)| (k.to_string(), Value::Long(*v)))
+            .map(|(k, v)| {
+                Value::Record(vec![
+                    ("key".to_string(), Value::Int(*k)),
+                    ("value".to_string(), Value::Long(*v)),
+                ])
+            })
             .collect();
-        Value::Union(1, Box::new(Value::Map(map)))
+        Value::Union(1, Box::new(Value::Array(array)))
     } else {
         Value::Union(0, Box::new(Value::Null))
     };
     fields.push(("value_counts".to_string(), value_counts));
 
-    // Optional null_value_counts
+    // Optional null_value_counts (array of key-value records)
     let null_value_counts = if let Some(counts) = data_file.null_value_counts() {
-        let map: HashMap<String, Value> = counts
+        let array: Vec<Value> = counts
             .iter()
-            .map(|(k, v)| (k.to_string(), Value::Long(*v)))
+            .map(|(k, v)| {
+                Value::Record(vec![
+                    ("key".to_string(), Value::Int(*k)),
+                    ("value".to_string(), Value::Long(*v)),
+                ])
+            })
             .collect();
-        Value::Union(1, Box::new(Value::Map(map)))
+        Value::Union(1, Box::new(Value::Array(array)))
     } else {
         Value::Union(0, Box::new(Value::Null))
     };
     fields.push(("null_value_counts".to_string(), null_value_counts));
 
-    // Optional lower_bounds
+    // Optional lower_bounds (array of key-value records)
     let lower_bounds = if let Some(bounds) = data_file.lower_bounds() {
-        let map: HashMap<String, Value> = bounds
+        let array: Vec<Value> = bounds
             .iter()
-            .map(|(k, v)| (k.to_string(), Value::Bytes(v.clone())))
+            .map(|(k, v)| {
+                Value::Record(vec![
+                    ("key".to_string(), Value::Int(*k)),
+                    ("value".to_string(), Value::Bytes(v.clone())),
+                ])
+            })
             .collect();
-        Value::Union(1, Box::new(Value::Map(map)))
+        Value::Union(1, Box::new(Value::Array(array)))
     } else {
         Value::Union(0, Box::new(Value::Null))
     };
     fields.push(("lower_bounds".to_string(), lower_bounds));
 
-    // Optional upper_bounds
+    // Optional upper_bounds (array of key-value records)
     let upper_bounds = if let Some(bounds) = data_file.upper_bounds() {
-        let map: HashMap<String, Value> = bounds
+        let array: Vec<Value> = bounds
             .iter()
-            .map(|(k, v)| (k.to_string(), Value::Bytes(v.clone())))
+            .map(|(k, v)| {
+                Value::Record(vec![
+                    ("key".to_string(), Value::Int(*k)),
+                    ("value".to_string(), Value::Bytes(v.clone())),
+                ])
+            })
             .collect();
-        Value::Union(1, Box::new(Value::Map(map)))
+        Value::Union(1, Box::new(Value::Array(array)))
     } else {
         Value::Union(0, Box::new(Value::Null))
     };

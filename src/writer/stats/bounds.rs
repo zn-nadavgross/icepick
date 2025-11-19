@@ -1,10 +1,13 @@
 use crate::error::{Error, Result};
 use arrow::array::{
-    Array, BinaryArray, BooleanArray, Decimal128Array, FixedSizeBinaryArray, Float32Array,
+    Array, AsArray, BinaryArray, BooleanArray, Decimal128Array, FixedSizeBinaryArray, Float32Array,
     Float64Array, Int32Array, Int64Array, LargeBinaryArray, LargeStringArray, PrimitiveArray,
     StringArray,
 };
-use arrow::datatypes::{ArrowPrimitiveType, DataType};
+use arrow::datatypes::{
+    ArrowPrimitiveType, DataType, TimeUnit, TimestampMicrosecondType, TimestampMillisecondType,
+    TimestampNanosecondType, TimestampSecondType,
+};
 use std::cmp::Ordering;
 use std::collections::{hash_map::Entry, HashMap};
 
@@ -115,10 +118,25 @@ pub(super) fn compute_bounds(
             Ok(primitive_min_max(array)
                 .map(|(min, max)| (BoundValue::Int32(min), BoundValue::Int32(max))))
         }
-        DataType::Int64 | DataType::Date64 | DataType::Time64(_) | DataType::Timestamp(_, _) => {
+        DataType::Int64 | DataType::Date64 | DataType::Time64(_) => {
             let array = downcast::<Int64Array>(column, "Int64Array")?;
             Ok(primitive_min_max(array)
                 .map(|(min, max)| (BoundValue::Int64(min), BoundValue::Int64(max))))
+        }
+        DataType::Timestamp(unit, _) => {
+            let bounds = match unit {
+                TimeUnit::Second => primitive_min_max(column.as_primitive::<TimestampSecondType>()),
+                TimeUnit::Millisecond => {
+                    primitive_min_max(column.as_primitive::<TimestampMillisecondType>())
+                }
+                TimeUnit::Microsecond => {
+                    primitive_min_max(column.as_primitive::<TimestampMicrosecondType>())
+                }
+                TimeUnit::Nanosecond => {
+                    primitive_min_max(column.as_primitive::<TimestampNanosecondType>())
+                }
+            };
+            Ok(bounds.map(|(min, max)| (BoundValue::Int64(min), BoundValue::Int64(max))))
         }
         DataType::Float32 => {
             let array = downcast::<Float32Array>(column, "Float32Array")?;
@@ -338,4 +356,32 @@ fn decimal_min_max(array: &Decimal128Array) -> Option<(i128, i128)> {
         }
     }
     Some((min, max))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow::array::TimestampMicrosecondArray;
+
+    #[test]
+    fn computes_bounds_for_timestamp_arrays() {
+        let data_type = DataType::Timestamp(TimeUnit::Microsecond, None);
+        let array =
+            TimestampMicrosecondArray::from(vec![Some(1_000), Some(-500), None, Some(2_000)]);
+        let column: &dyn Array = &array;
+
+        let (lower, upper) = compute_bounds(&data_type, column)
+            .expect("timestamp bounds")
+            .expect("non-empty timestamp bounds");
+
+        match lower {
+            BoundValue::Int64(value) => assert_eq!(value, -500),
+            other => panic!("unexpected lower bound: {other:?}"),
+        }
+
+        match upper {
+            BoundValue::Int64(value) => assert_eq!(value, 2_000),
+            other => panic!("unexpected upper bound: {other:?}"),
+        }
+    }
 }

@@ -147,13 +147,13 @@ pub fn manifest_entry_schema_v2() -> Result<Schema, apache_avro::Error> {
               }
             ],
             "default": null,
-            "field-id": 124
+            "field-id": 128
           },
           {
             "name": "key_metadata",
             "type": ["null", "bytes"],
             "default": null,
-            "field-id": 105
+            "field-id": 131
           },
           {
             "name": "split_offsets",
@@ -166,7 +166,7 @@ pub fn manifest_entry_schema_v2() -> Result<Schema, apache_avro::Error> {
               }
             ],
             "default": null,
-            "field-id": 106
+            "field-id": 132
           },
           {
             "name": "equality_ids",

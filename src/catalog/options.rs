@@ -1,5 +1,6 @@
 //! Shared configuration types for catalog clients.
 
+use crate::catalog::retry::RetryConfig;
 use std::time::Duration;
 
 /// Configuration for the underlying HTTP client.
@@ -116,6 +117,7 @@ fn default_user_agent() -> String {
 pub struct CatalogOptions {
     http: HttpClientConfig,
     reference: String,
+    retry: Option<RetryConfig>,
 }
 
 impl Default for CatalogOptions {
@@ -123,6 +125,7 @@ impl Default for CatalogOptions {
         Self {
             http: HttpClientConfig::default(),
             reference: "main".to_string(),
+            retry: None,
         }
     }
 }
@@ -145,6 +148,15 @@ impl CatalogOptions {
         self
     }
 
+    /// Configure retry behavior for catalog operations.
+    ///
+    /// This controls application-level retries based on error types (Transient/Permanent/Timeout).
+    /// If not set, catalog operations will not retry failed requests.
+    pub fn with_retry_config(mut self, retry: RetryConfig) -> Self {
+        self.retry = Some(retry);
+        self
+    }
+
     /// Access the configured HTTP behaviour.
     pub fn http(&self) -> &HttpClientConfig {
         &self.http
@@ -153,5 +165,10 @@ impl CatalogOptions {
     /// Get the reference/branch that commits and table loads target.
     pub fn reference(&self) -> &str {
         &self.reference
+    }
+
+    /// Get the retry configuration if set.
+    pub fn retry(&self) -> Option<&RetryConfig> {
+        self.retry.as_ref()
     }
 }

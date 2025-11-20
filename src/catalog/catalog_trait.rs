@@ -57,4 +57,26 @@ pub trait Catalog: Send + Sync {
         old_metadata_location: &str,
         new_metadata_location: &str,
     ) -> Result<()>;
+
+    /// Update table schema (optional, for schema evolution support)
+    ///
+    /// This method updates the table's schema by writing new metadata with the updated schema
+    /// and atomically updating the catalog pointer. The default implementation returns an error
+    /// indicating schema evolution is not supported for this catalog type.
+    ///
+    /// # Arguments
+    /// * `identifier` - The table identifier
+    /// * `new_schema` - The new schema to apply
+    ///
+    /// # Returns
+    /// The updated Table with the new schema
+    async fn update_table_schema(
+        &self,
+        _identifier: &TableIdent,
+        _new_schema: crate::spec::Schema,
+    ) -> Result<Table> {
+        Err(crate::error::Error::invalid_input(
+            "Schema evolution not supported for this catalog implementation",
+        ))
+    }
 }

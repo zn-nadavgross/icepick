@@ -1,11 +1,12 @@
 use anyhow::{Context, Result};
-use icepick::catalog::Catalog;
+use icepick::catalog::{BackoffStrategy, Catalog, CatalogOptions, HttpClientConfig, RetryConfig};
 use icepick::spec::{NamespaceIdent, NestedField, PrimitiveType, Schema, TableIdent, Type};
 use icepick::{AppendOnlyTableWriter, R2Catalog, TableWriterOptions};
+use std::time::Duration;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-/// Create R2 Data Catalog with Bearer token authentication from .env
+/// Create R2 Data Catalog with Bearer token authentication, timeout, and retry configuration
 async fn create_r2_catalog_from_env() -> Result<R2Catalog> {
     // Load .env file
     dotenvy::dotenv().ok();
@@ -17,7 +18,28 @@ async fn create_r2_catalog_from_env() -> Result<R2Catalog> {
     let api_token = std::env::var("CLOUDFLARE_API_TOKEN")
         .context("CLOUDFLARE_API_TOKEN not found in environment")?;
 
-    let catalog = R2Catalog::new("r2", account_id, bucket_name, api_token)
+    // Configure HTTP client with timeouts
+    let http_config = HttpClientConfig::new()
+        .with_timeout(Duration::from_secs(60))
+        .with_connect_timeout(Duration::from_secs(10));
+
+    // Configure retry behavior with exponential backoff
+    let retry_config = RetryConfig::new(
+        3,
+        BackoffStrategy::Exponential {
+            initial_delay: Duration::from_millis(100),
+            max_delay: Duration::from_secs(30),
+            multiplier: 2.0,
+        },
+    )
+    .with_max_elapsed_time(Duration::from_secs(120));
+
+    // Create catalog with options
+    let options = CatalogOptions::new()
+        .with_http_config(http_config)
+        .with_retry_config(retry_config);
+
+    let catalog = R2Catalog::with_options("r2", account_id, bucket_name, api_token, options)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to create R2 catalog: {}", e))?;
 

@@ -1,11 +1,12 @@
 use super::rest::IcebergRestCatalog;
-use super::{map_catalog_error, AuthProvider, Catalog, CatalogError, CatalogOptions};
+use super::{map_catalog_error, AuthProvider, Catalog, CatalogError, CatalogOptions, RetryConfig};
 use crate::error::{Error, Result};
 use crate::io::FileIO;
 use crate::spec::{NamespaceIdent, TableCreation, TableIdent};
 use crate::table::Table;
 use async_trait::async_trait;
 use std::collections::HashMap;
+use std::time::Duration;
 
 /// Generic Iceberg REST catalog wrapper that can target any compliant REST endpoint.
 ///
@@ -99,6 +100,71 @@ impl RestCatalogBuilder {
         self.auth_provider = Some(Box::new(crate::catalog::BearerTokenAuthProvider::new(
             token,
         )));
+        self
+    }
+
+    /// Configure retry behavior for catalog operations.
+    ///
+    /// This sets application-level retries based on error types (Transient/Permanent/Timeout).
+    /// For HTTP-level retries (connection errors, network issues), use [`CatalogOptions::with_http_config`].
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use icepick::catalog::{RestCatalog, RetryConfig, BackoffStrategy};
+    /// use std::time::Duration;
+    /// # use icepick::io::FileIO;
+    /// # use opendal::Operator;
+    ///
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let file_io = FileIO::new(Operator::via_iter(opendal::Scheme::Memory, [])?);
+    /// let retry = RetryConfig::new(
+    ///     5,
+    ///     BackoffStrategy::Exponential {
+    ///         initial_delay: Duration::from_millis(100),
+    ///         max_delay: Duration::from_secs(30),
+    ///         multiplier: 2.0,
+    ///     }
+    /// );
+    ///
+    /// let catalog = RestCatalog::builder("my-catalog", "https://api.example.com")
+    ///     .with_bearer_token("my-token")
+    ///     .with_retry_config(retry)
+    ///     .with_file_io(file_io)
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_retry_config(mut self, retry: RetryConfig) -> Self {
+        self.options = self.options.with_retry_config(retry);
+        self
+    }
+
+    /// Set the request timeout for catalog operations.
+    ///
+    /// This is a convenience method for configuring HTTP-level timeouts.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use icepick::catalog::RestCatalog;
+    /// use std::time::Duration;
+    /// # use icepick::io::FileIO;
+    /// # use opendal::Operator;
+    ///
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let file_io = FileIO::new(Operator::via_iter(opendal::Scheme::Memory, [])?);
+    /// let catalog = RestCatalog::builder("my-catalog", "https://api.example.com")
+    ///     .with_bearer_token("my-token")
+    ///     .with_timeout(Duration::from_secs(60))
+    ///     .with_file_io(file_io)
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        let http = self.options.http().clone().with_timeout(timeout);
+        self.options = self.options.with_http_config(http);
         self
     }
 

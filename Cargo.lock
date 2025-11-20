@@ -833,6 +833,7 @@ dependencies = [
  "iana-time-zone",
  "js-sys",
  "num-traits",
+ "serde",
  "wasm-bindgen",
  "windows-link",
 ]
@@ -1583,6 +1584,7 @@ dependencies = [
  "aws-sdk-sts",
  "aws-sigv4",
  "bytes",
+ "chrono",
  "dotenvy",
  "flate2",
  "futures",

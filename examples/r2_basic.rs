@@ -118,8 +118,23 @@ async fn main() -> Result<()> {
     let schema = build_schema()?;
 
     let batch = create_sample_data(&schema)?;
+
+    // Set timestamp explicitly for WASM compatibility
+    // Note: On WASM, you would get the timestamp from JavaScript via wasm_bindgen
+    #[cfg(not(target_family = "wasm"))]
+    let timestamp_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+
+    #[cfg(target_family = "wasm")]
+    let timestamp_ms = {
+        // On WASM, get timestamp from JavaScript: js_sys::Date::now() as i64
+        panic!("WASM timestamp must be provided from JavaScript")
+    };
+
     let writer = AppendOnlyTableWriter::new(&catalog, namespace.clone(), table_name.clone())
-        .with_options(TableWriterOptions::new());
+        .with_options(TableWriterOptions::new().with_timestamp_ms(timestamp_ms));
     writer
         .append_batch(batch.clone())
         .await

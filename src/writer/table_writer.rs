@@ -57,6 +57,7 @@ pub enum SchemaEvolutionPolicy {
 pub struct TableWriterOptions {
     partition_fields: Vec<PartitionFieldConfig>,
     schema_evolution: SchemaEvolutionPolicy,
+    timestamp_ms: Option<i64>,
 }
 
 impl TableWriterOptions {
@@ -85,6 +86,18 @@ impl TableWriterOptions {
     /// Get the schema evolution policy.
     pub fn schema_evolution(&self) -> SchemaEvolutionPolicy {
         self.schema_evolution
+    }
+
+    /// Set an explicit timestamp for commits (required for WASM compatibility).
+    /// If not set, callers must provide timestamp via append_batch_with_timestamp.
+    pub fn with_timestamp_ms(mut self, timestamp_ms: i64) -> Self {
+        self.timestamp_ms = Some(timestamp_ms);
+        self
+    }
+
+    /// Get the timestamp if set.
+    pub fn timestamp_ms(&self) -> Option<i64> {
+        self.timestamp_ms
     }
 }
 
@@ -431,10 +444,25 @@ impl<'a> AppendOnlyTableWriter<'a> {
                 .build()?;
         }
 
+        // Use provided timestamp or generate one on native platforms
+        let timestamp_ms = self.options.timestamp_ms.unwrap_or_else(|| {
+            #[cfg(not(target_family = "wasm"))]
+            {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as i64
+            }
+            #[cfg(target_family = "wasm")]
+            {
+                panic!("timestamp_ms must be provided via TableWriterOptions::with_timestamp_ms() on WASM platforms")
+            }
+        });
+
         table
             .transaction()
             .append(vec![data_file.clone()])
-            .commit(self.catalog)
+            .commit(self.catalog, timestamp_ms)
             .await?;
 
         let reloaded_table = self.catalog.load_table(table_ident).await?;

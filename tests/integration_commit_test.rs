@@ -119,10 +119,11 @@ async fn test_end_to_end_commit_with_stats() {
 
     // Commit
     let catalog = TestCatalog;
+    let timestamp_ms = 1234567890;
     table
         .transaction()
         .append(vec![data_file])
-        .commit(&catalog)
+        .commit(&catalog, timestamp_ms)
         .await
         .unwrap();
 
@@ -221,10 +222,11 @@ async fn test_multiple_sequential_commits() {
         .build()
         .unwrap();
 
+    let timestamp_ms_1 = 1234567890;
     table
         .transaction()
         .append(vec![data_file1])
-        .commit(&catalog)
+        .commit(&catalog, timestamp_ms_1)
         .await
         .unwrap();
 
@@ -251,10 +253,11 @@ async fn test_multiple_sequential_commits() {
         .build()
         .unwrap();
 
+    let timestamp_ms_2 = 1234567900;
     table
         .transaction()
         .append(vec![data_file2])
-        .commit(&catalog)
+        .commit(&catalog, timestamp_ms_2)
         .await
         .unwrap();
 

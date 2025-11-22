@@ -108,10 +108,18 @@ async fn main() -> Result<()> {
     let batch = create_sample_data(&schema)?;
 
     // Configure optional partitioning (identity on id for this example)
-    let writer_options = TableWriterOptions::new().with_partition_field(PartitionFieldConfig::new(
-        "id",
-        PartitionTransform::Identity,
-    ));
+    // Set timestamp explicitly for WASM compatibility
+    let timestamp_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+
+    let writer_options = TableWriterOptions::new()
+        .with_partition_field(PartitionFieldConfig::new(
+            "id",
+            PartitionTransform::Identity,
+        ))
+        .with_timestamp_ms(timestamp_ms);
 
     let writer = AppendOnlyTableWriter::new(&catalog, namespace.clone(), table_name.clone())
         .with_options(writer_options);

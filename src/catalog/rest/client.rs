@@ -143,6 +143,7 @@ impl IcebergRestCatalog {
         let mut s3_config_vec = vec![
             ("endpoint".to_string(), r2_endpoint),
             ("bucket".to_string(), config.bucket_name.clone()),
+            ("region".to_string(), "auto".to_string()), // R2 always uses "auto" region
         ];
 
         // Apply properties from config response

@@ -1,6 +1,6 @@
 [package]
 name = "icepick"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Clay Smith"]
 description = "Experimental Rust client for Apache Iceberg with WASM support for AWS S3 Tables and Cloudflare R2"

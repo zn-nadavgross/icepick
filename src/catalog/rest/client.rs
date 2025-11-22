@@ -171,6 +171,85 @@ impl IcebergRestCatalog {
         })
     }
 
+    /// Create catalog for Cloudflare R2 with a pre-configured FileIO
+    ///
+    /// This is useful when you need to provide explicit credentials or custom FileIO configuration.
+    /// Unlike `from_r2_config_with_options`, this method doesn't create the FileIO automatically,
+    /// allowing the caller to provide a FileIO with explicit credentials.
+    pub async fn from_r2_with_file_io(
+        name: String,
+        config: R2Config,
+        file_io: FileIO,
+        options: CatalogOptions,
+    ) -> Result<Self> {
+        let endpoint = config.endpoint_override.unwrap_or_else(|| {
+            format!(
+                "https://catalog.cloudflarestorage.com/{}/{}",
+                config.account_id, config.bucket_name
+            )
+        });
+
+        let auth = Box::new(crate::catalog::BearerTokenAuthProvider::new(
+            config.api_token,
+        ));
+        let http_client = build_http_client(options.http())?;
+
+        // Construct warehouse name from account_id and bucket_name
+        let warehouse = format!("{}_{}", config.account_id, config.bucket_name);
+
+        // Call /v1/config to get server configuration (per Iceberg REST spec)
+        let config_url = format!("{}/v1/config?warehouse={}", endpoint, warehouse);
+
+        let req = http_client.get(&config_url).build().map_err(|e| {
+            CatalogError::HttpError(format!("Failed to build config request: {}", e))
+        })?;
+
+        // Sign the request with auth
+        let signed_req = auth.sign_request(req).await?;
+
+        let response = http_client
+            .execute(signed_req)
+            .await
+            .map_err(|e| CatalogError::HttpError(format!("Config request failed: {}", e)))?;
+
+        let status = response.status();
+        let body_text = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "Unable to read response".to_string());
+
+        if !status.is_success() {
+            return Err(CatalogError::HttpError(format!(
+                "Config request failed with status {}: {}",
+                status, body_text
+            )));
+        }
+
+        let config_response: types::ConfigResponse =
+            serde_json::from_str(&body_text).map_err(|e| {
+                CatalogError::HttpError(format!("Failed to parse config response: {}", e))
+            })?;
+
+        // Merge configuration: defaults < client properties < overrides
+        let mut properties = config_response.defaults;
+        properties.insert("warehouse".to_string(), warehouse.clone());
+        properties.extend(config_response.overrides);
+
+        // Extract prefix from server configuration (defaults to empty string)
+        let prefix = properties.get("prefix").cloned().unwrap_or_default();
+
+        // Use the provided FileIO instead of creating a new one
+        Ok(Self {
+            endpoint,
+            prefix,
+            http_client,
+            auth_provider: auth,
+            file_io,
+            name,
+            options,
+        })
+    }
+
     /// Create catalog for AWS S3 Tables
     #[cfg(not(target_family = "wasm"))]
     pub async fn from_s3_tables_arn(name: String, arn: &str) -> Result<Self> {

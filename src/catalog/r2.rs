@@ -140,6 +140,99 @@ impl R2Catalog {
 
         Ok(Self { inner })
     }
+
+    /// Create a new R2 catalog with explicit AWS credentials for S3 access.
+    ///
+    /// This method is useful in WASM environments or when you need to provide explicit
+    /// credentials instead of relying on environment variable discovery.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Catalog name for identification
+    /// * `account_id` - Cloudflare account ID
+    /// * `bucket_name` - R2 bucket name
+    /// * `api_token` - Cloudflare API token with R2 permissions (for catalog API)
+    /// * `access_key_id` - R2 access key ID (for S3-compatible storage access)
+    /// * `secret_access_key` - R2 secret access key (for S3-compatible storage access)
+    /// * `options` - Additional configuration (HTTP timeouts, retries, default reference)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The account ID or bucket name is invalid
+    /// - The API token is invalid or lacks permissions
+    /// - The credentials are invalid
+    /// - The R2 service is unreachable
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use icepick::{R2Catalog, catalog::CatalogOptions};
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let catalog = R2Catalog::with_credentials(
+    ///     "production",
+    ///     "abc123",
+    ///     "my-bucket",
+    ///     "cloudflare-api-token",
+    ///     "r2-access-key-id",
+    ///     "r2-secret-access-key",
+    ///     CatalogOptions::default(),
+    /// ).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn with_credentials(
+        name: impl Into<String>,
+        account_id: impl Into<String>,
+        bucket_name: impl Into<String>,
+        api_token: impl Into<String>,
+        access_key_id: impl Into<String>,
+        secret_access_key: impl Into<String>,
+        options: CatalogOptions,
+    ) -> Result<Self> {
+        let name = name.into();
+        let account_id_str = account_id.into();
+        let bucket_name_str = bucket_name.into();
+        let api_token = api_token.into();
+        let access_key_id = access_key_id.into();
+        let secret_access_key = secret_access_key.into();
+
+        // Build the R2 S3-compatible endpoint
+        let r2_endpoint = format!("https://{}.r2.cloudflarestorage.com", account_id_str);
+
+        // Create OpenDAL S3 operator with explicit credentials
+        use opendal::services::S3;
+        let s3_builder = S3::default()
+            .bucket(&bucket_name_str)
+            .region("auto") // R2 always uses "auto" region
+            .endpoint(&r2_endpoint)
+            .access_key_id(&access_key_id)
+            .secret_access_key(&secret_access_key);
+
+        let operator = opendal::Operator::new(s3_builder)
+            .map_err(|e| {
+                crate::error::Error::IoError(format!("Failed to create S3 operator: {}", e))
+            })?
+            .finish();
+
+        let file_io = crate::io::FileIO::new(operator);
+
+        // Create R2Config for catalog initialization
+        let config = crate::catalog::R2Config {
+            account_id: account_id_str,
+            bucket_name: bucket_name_str,
+            api_token,
+            endpoint_override: None,
+        };
+
+        // Use the new from_r2_with_file_io method
+        let inner = IcebergRestCatalog::from_r2_with_file_io(name, config, file_io, options)
+            .await
+            .map_err(map_catalog_error)?;
+
+        Ok(Self { inner })
+    }
 }
 
 // Implement Catalog trait by delegating to inner IcebergRestCatalog (native platforms)

@@ -833,6 +833,7 @@ dependencies = [
  "iana-time-zone",
  "js-sys",
  "num-traits",
+ "serde",
  "wasm-bindgen",
  "windows-link",
 ]
@@ -1572,7 +1573,7 @@ dependencies = [
 
 [[package]]
 name = "icepick"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "apache-avro",
@@ -1583,6 +1584,7 @@ dependencies = [
  "aws-sdk-sts",
  "aws-sigv4",
  "bytes",
+ "chrono",
  "dotenvy",
  "flate2",
  "futures",

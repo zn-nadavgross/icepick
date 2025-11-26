@@ -45,8 +45,10 @@ fn test_add_snapshot_to_metadata() {
         .build()
         .unwrap();
 
-    let updated = metadata.add_snapshot(snapshot);
+    let timestamp_ms = 1234567890;
+    let updated = metadata.add_snapshot(snapshot, timestamp_ms);
 
     assert_eq!(updated.current_snapshot_id(), Some(1));
     assert_eq!(updated.snapshots().len(), 1);
+    assert_eq!(updated.last_updated_ms(), timestamp_ms);
 }

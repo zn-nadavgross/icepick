@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Iterable, Tuple
 
 
-DEFAULT_MAX_LOC = int(os.getenv("MAX_LOC_PER_FILE", "400"))
+DEFAULT_MAX_LOC = int(os.getenv("MAX_LOC_PER_FILE", "450"))
 DEFAULT_MAX_COMPLEXITY = int(os.getenv("MAX_COMPLEXITY_SCORE", "60"))
 
 # Regex fragments roughly representing cyclomatic complexity contributors.

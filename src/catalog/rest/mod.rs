@@ -11,7 +11,7 @@ use crate::catalog::{AuthProvider, CatalogError, CatalogOptions, Result};
 use crate::io::FileIO;
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use reqwest::{Client, Response, StatusCode};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tracing::{debug, trace, Level};
 
 #[cfg(target_family = "wasm")]
@@ -344,6 +344,88 @@ impl IcebergRestCatalog {
                     "HTTP {}: {}",
                     status, body
                 )))
+            }
+        }
+    }
+
+    /// Wrap a catalog operation with application-level retry logic based on error type.
+    ///
+    /// This implements retry behavior configured via `RetryConfig` for transient errors
+    /// like network failures, server errors, and rate limits.
+    pub(super) async fn with_retry<F, Fut, T>(&self, operation: F) -> crate::error::Result<T>
+    where
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = crate::error::Result<T>>,
+    {
+        let retry_config = match self.options.retry() {
+            Some(config) => config,
+            None => {
+                // No retry configured, execute once
+                return operation().await;
+            }
+        };
+
+        let start_time = Instant::now();
+        let max_retries = retry_config.max_retries();
+        let mut attempt = 0;
+
+        loop {
+            // Check if we've exceeded max elapsed time
+            if let Some(max_elapsed) = retry_config.max_elapsed_time() {
+                if start_time.elapsed() >= max_elapsed {
+                    if tracing::enabled!(Level::DEBUG) {
+                        debug!("Retry timeout: exceeded max elapsed time {:?}", max_elapsed);
+                    }
+                    return Err(crate::error::Error::unexpected(format!(
+                        "Operation timed out after {:?}",
+                        max_elapsed
+                    )));
+                }
+            }
+
+            match operation().await {
+                Ok(result) => return Ok(result),
+                Err(err) => {
+                    // Check if error is retryable (network errors, server errors)
+                    let is_retryable = matches!(
+                        err,
+                        crate::error::Error::NetworkError { .. }
+                            | crate::error::Error::ServerError { .. }
+                            | crate::error::Error::IoError { .. }
+                    );
+
+                    if !is_retryable {
+                        if tracing::enabled!(Level::DEBUG) {
+                            debug!("Non-retryable error encountered: {:?}", err);
+                        }
+                        return Err(err);
+                    }
+
+                    // Check if we have retries left
+                    if attempt >= max_retries {
+                        if tracing::enabled!(Level::DEBUG) {
+                            debug!("Max retries ({}) exceeded, returning error", max_retries);
+                        }
+                        return Err(err);
+                    }
+
+                    // Calculate backoff delay
+                    let delay = retry_config.delay_for_attempt(attempt);
+
+                    if tracing::enabled!(Level::DEBUG) {
+                        debug!(
+                            "Retryable error on attempt {}/{}: {:?}. Waiting {:?} before retry",
+                            attempt + 1,
+                            max_retries,
+                            err,
+                            delay
+                        );
+                    }
+
+                    // Sleep before retry
+                    backoff_sleep(delay).await;
+                    attempt += 1;
+                }
             }
         }
     }

@@ -57,7 +57,11 @@ impl Transaction {
     }
 
     /// Commit the transaction, writing snapshots to the catalog
-    pub async fn commit(self, catalog: &dyn crate::catalog::Catalog) -> crate::error::Result<()> {
-        crate::commit::commit_transaction(self, catalog).await
+    pub async fn commit(
+        self,
+        catalog: &dyn crate::catalog::Catalog,
+        timestamp_ms: i64,
+    ) -> crate::error::Result<()> {
+        crate::commit::commit_transaction(self, catalog, timestamp_ms).await
     }
 }

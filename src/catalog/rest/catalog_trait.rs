@@ -49,7 +49,10 @@ impl crate::catalog::Catalog for IcebergRestCatalog {
         &self,
         table: &crate::spec::TableIdent,
     ) -> crate::error::Result<crate::table::Table> {
-        self.load_table_impl(table).await
+        // Wrap load_table with retry logic if configured
+        let table = table.clone();
+        self.with_retry(|| async { self.load_table_impl(&table).await })
+            .await
     }
 
     async fn drop_table(&self, table: &crate::spec::TableIdent) -> crate::error::Result<()> {

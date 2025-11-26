@@ -5,6 +5,11 @@ use crate::table::Table;
 
 pub fn from_catalog_error(e: CatalogError) -> Error {
     match e {
+        CatalogError::Transient(msg) => Error::unexpected(format!("Transient error: {}", msg)),
+        CatalogError::Permanent(msg) => Error::unexpected(format!("Permanent error: {}", msg)),
+        CatalogError::Timeout(duration) => {
+            Error::unexpected(format!("Timeout after {:?}", duration))
+        }
         CatalogError::NotFound(msg) => Error::not_found(msg),
         CatalogError::Conflict(msg) => Error::concurrent_modification(msg),
         CatalogError::InvalidRequest(msg) => Error::invalid_input(msg),

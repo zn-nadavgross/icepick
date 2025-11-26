@@ -178,15 +178,12 @@ impl TableMetadata {
     }
 
     /// Create a new TableMetadata with an added snapshot
-    pub fn add_snapshot(&self, snapshot: Snapshot) -> Self {
+    pub fn add_snapshot(&self, snapshot: Snapshot, timestamp_ms: i64) -> Self {
         let mut updated = self.clone();
         updated.snapshots.push(snapshot.clone());
 
         updated.current_snapshot_id = Some(snapshot.snapshot_id());
-        updated.last_updated_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64;
+        updated.last_updated_ms = timestamp_ms;
         if let Some(sequence_number) = snapshot.sequence_number() {
             updated.last_sequence_number = sequence_number;
         }

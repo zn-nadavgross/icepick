@@ -72,8 +72,8 @@ pub use spec::{
 pub use table::Table;
 pub use transaction::Transaction;
 pub use writer::{
-    arrow_to_parquet, AppendOnlyTableWriter, PartitionFieldConfig, PartitionTransform,
-    TableWriterOptions,
+    arrow_to_parquet, AppendOnlyTableWriter, AppendResult, PartitionFieldConfig,
+    PartitionTransform, SchemaEvolutionPolicy, TableWriterOptions,
 };
 
 // Re-export catalog types

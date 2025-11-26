@@ -1,6 +1,6 @@
 [package]
 name = "icepick"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Clay Smith"]
 description = "Experimental Rust client for Apache Iceberg with WASM support for AWS S3 Tables and Cloudflare R2"
@@ -29,6 +29,7 @@ flate2 = "1.1.5"
 futures = "0.3"
 bytes = "1.0"
 tracing = { version = "0.1", features = ["std"] }
+chrono = { version = "0.4.42", features = ["serde"] }
 
 # Non-WASM targets (native platforms)
 [target.'cfg(not(target_family = "wasm"))'.dependencies]

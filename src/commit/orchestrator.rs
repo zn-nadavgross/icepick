@@ -41,6 +41,7 @@ fn generate_snapshot_id(table: &crate::table::Table) -> i64 {
 pub async fn try_commit(
     transaction: &Transaction,
     catalog: &dyn crate::catalog::Catalog,
+    timestamp_ms: i64,
 ) -> Result<()> {
     let table = transaction.table();
     let metadata = table.metadata();
@@ -193,12 +194,7 @@ pub async fn try_commit(
 
     let snapshot = snapshot_builder
         .with_sequence_number(sequence_number)
-        .with_timestamp_ms(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as i64,
-        )
+        .with_timestamp_ms(timestamp_ms)
         .with_manifest_list(&manifest_list_file_path)
         .with_summary(summary)
         .with_schema_id(schema_id)
@@ -211,7 +207,7 @@ pub async fn try_commit(
     );
 
     // 4. Update metadata
-    let new_metadata = metadata.add_snapshot(snapshot.clone());
+    let new_metadata = metadata.add_snapshot(snapshot.clone(), timestamp_ms);
 
     // Debug: Check the snapshot in new_metadata before serialization
     if let Some(last_snapshot) = new_metadata.snapshots().last() {
@@ -254,13 +250,14 @@ pub async fn try_commit(
 pub async fn commit_transaction(
     transaction: Transaction,
     catalog: &dyn crate::catalog::Catalog,
+    timestamp_ms: i64,
 ) -> Result<()> {
     const MAX_RETRIES: u32 = 3;
 
     let mut transaction = transaction;
 
     for attempt in 0..MAX_RETRIES {
-        match try_commit(&transaction, catalog).await {
+        match try_commit(&transaction, catalog, timestamp_ms).await {
             Ok(()) => return Ok(()),
             Err(e @ Error::ConcurrentModification { .. }) => {
                 if attempt == MAX_RETRIES - 1 {

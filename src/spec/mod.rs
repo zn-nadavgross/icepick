@@ -8,6 +8,7 @@ pub mod data_file;
 pub mod identifier;
 pub mod metadata;
 pub mod schema;
+pub mod schema_evolution;
 pub mod snapshot;
 pub mod table_creation;
 pub mod types;

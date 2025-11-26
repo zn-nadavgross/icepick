@@ -1,16 +1,38 @@
 use anyhow::{ensure, Context, Result};
-use icepick::catalog::Catalog;
+use icepick::catalog::{BackoffStrategy, Catalog, CatalogOptions, HttpClientConfig, RetryConfig};
 use icepick::spec::{NamespaceIdent, NestedField, PrimitiveType, Schema, TableIdent, Type};
 use icepick::{
     AppendOnlyTableWriter, PartitionFieldConfig, PartitionTransform, S3TablesCatalog,
     TableWriterOptions,
 };
+use std::time::Duration;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-/// Create S3 Tables catalog with SigV4 authentication
+/// Create S3 Tables catalog with SigV4 authentication, timeout, and retry configuration
 async fn create_s3_tables_catalog(arn: &str) -> Result<S3TablesCatalog> {
-    let catalog = S3TablesCatalog::from_arn("s3tables", arn)
+    // Configure HTTP client with timeouts
+    let http_config = HttpClientConfig::new()
+        .with_timeout(Duration::from_secs(60))
+        .with_connect_timeout(Duration::from_secs(10));
+
+    // Configure retry behavior with exponential backoff
+    let retry_config = RetryConfig::new(
+        3,
+        BackoffStrategy::Exponential {
+            initial_delay: Duration::from_millis(100),
+            max_delay: Duration::from_secs(30),
+            multiplier: 2.0,
+        },
+    )
+    .with_max_elapsed_time(Duration::from_secs(120));
+
+    // Create catalog with options
+    let options = CatalogOptions::new()
+        .with_http_config(http_config)
+        .with_retry_config(retry_config);
+
+    let catalog = S3TablesCatalog::from_arn_with_options("s3tables", arn, options)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to create S3 Tables catalog: {}", e))?;
 
@@ -86,10 +108,18 @@ async fn main() -> Result<()> {
     let batch = create_sample_data(&schema)?;
 
     // Configure optional partitioning (identity on id for this example)
-    let writer_options = TableWriterOptions::new().with_partition_field(PartitionFieldConfig::new(
-        "id",
-        PartitionTransform::Identity,
-    ));
+    // Set timestamp explicitly for WASM compatibility
+    let timestamp_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+
+    let writer_options = TableWriterOptions::new()
+        .with_partition_field(PartitionFieldConfig::new(
+            "id",
+            PartitionTransform::Identity,
+        ))
+        .with_timestamp_ms(timestamp_ms);
 
     let writer = AppendOnlyTableWriter::new(&catalog, namespace.clone(), table_name.clone())
         .with_options(writer_options);

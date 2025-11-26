@@ -55,7 +55,10 @@ async fn try_commit_records_update_and_writes_files() {
         .unwrap();
 
     let transaction = table.transaction().append(vec![data_file]);
-    try_commit(&transaction, &catalog).await.unwrap();
+    let timestamp_ms = 1234567890;
+    try_commit(&transaction, &catalog, timestamp_ms)
+        .await
+        .unwrap();
 
     let updates = catalog.recorded_updates().await;
     assert_eq!(updates.len(), 1);

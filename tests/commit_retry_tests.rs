@@ -53,10 +53,11 @@ async fn commit_transaction_retries_after_conflict() {
         .build()
         .unwrap();
 
+    let timestamp_ms = 1234567890;
     table
         .transaction()
         .append(vec![data_file])
-        .commit(&catalog)
+        .commit(&catalog, timestamp_ms)
         .await
         .expect("commit should succeed after retry");
 

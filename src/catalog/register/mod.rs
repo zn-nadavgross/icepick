@@ -23,8 +23,8 @@ pub use types::{
 };
 
 /// Register pre-existing files against an Iceberg table.
-pub async fn register_data_files<C: Catalog>(
-    catalog: &C,
+pub async fn register_data_files(
+    catalog: &dyn Catalog,
     namespace: NamespaceIdent,
     table: TableIdent,
     files: Vec<DataFileInput>,
@@ -131,10 +131,7 @@ pub async fn register_data_files<C: Catalog>(
     })
 }
 
-async fn ensure_namespace_exists<C: Catalog>(
-    catalog: &C,
-    namespace: &NamespaceIdent,
-) -> Result<()> {
+async fn ensure_namespace_exists(catalog: &dyn Catalog, namespace: &NamespaceIdent) -> Result<()> {
     if !catalog.namespace_exists(namespace).await? {
         catalog
             .create_namespace(namespace, HashMap::new())

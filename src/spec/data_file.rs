@@ -39,6 +39,10 @@ pub struct DataFile {
     value_counts: Option<HashMap<i32, i64>>,
     #[serde(rename = "null-value-counts", skip_serializing_if = "Option::is_none")]
     null_value_counts: Option<HashMap<i32, i64>>,
+    #[serde(rename = "split-offsets", skip_serializing_if = "Option::is_none")]
+    split_offsets: Option<Vec<i64>>,
+    #[serde(rename = "key-metadata", skip_serializing_if = "Option::is_none")]
+    key_metadata: Option<Vec<u8>>,
     #[serde(rename = "equality-ids", skip_serializing_if = "Option::is_none")]
     equality_ids: Option<Vec<i32>>,
     #[serde(rename = "lower-bounds", skip_serializing_if = "Option::is_none")]
@@ -98,6 +102,16 @@ impl DataFile {
         self.null_value_counts.as_ref()
     }
 
+    /// Get split offsets
+    pub fn split_offsets(&self) -> Option<&[i64]> {
+        self.split_offsets.as_deref()
+    }
+
+    /// Get key metadata (encryption)
+    pub fn key_metadata(&self) -> Option<&[u8]> {
+        self.key_metadata.as_deref()
+    }
+
     /// Get equality IDs
     pub fn equality_ids(&self) -> Option<&[i32]> {
         self.equality_ids.as_deref()
@@ -126,6 +140,8 @@ pub struct DataFileBuilder {
     column_sizes: Option<HashMap<i32, i64>>,
     value_counts: Option<HashMap<i32, i64>>,
     null_value_counts: Option<HashMap<i32, i64>>,
+    split_offsets: Option<Vec<i64>>,
+    key_metadata: Option<Vec<u8>>,
     equality_ids: Option<Vec<i32>>,
     lower_bounds: Option<HashMap<i32, Vec<u8>>>,
     upper_bounds: Option<HashMap<i32, Vec<u8>>>,
@@ -177,6 +193,16 @@ impl DataFileBuilder {
         self
     }
 
+    pub fn with_split_offsets(mut self, offsets: Vec<i64>) -> Self {
+        self.split_offsets = Some(offsets);
+        self
+    }
+
+    pub fn with_key_metadata(mut self, metadata: Vec<u8>) -> Self {
+        self.key_metadata = Some(metadata);
+        self
+    }
+
     pub fn with_equality_ids(mut self, ids: Vec<i32>) -> Self {
         self.equality_ids = Some(ids);
         self
@@ -211,6 +237,8 @@ impl DataFileBuilder {
             column_sizes: self.column_sizes,
             value_counts: self.value_counts,
             null_value_counts: self.null_value_counts,
+            split_offsets: self.split_offsets,
+            key_metadata: self.key_metadata,
             equality_ids: self.equality_ids,
             lower_bounds: self.lower_bounds,
             upper_bounds: self.upper_bounds,

@@ -78,6 +78,11 @@ pub use writer::{
 
 // Re-export catalog types
 pub use catalog::r2::R2Catalog;
+pub use catalog::register::{
+    introspect_parquet_file, register_data_files, DataFileFormat, DataFileInput, DataFileRegistrar,
+    EncryptionMetadata, FileMetrics, ParquetIntrospection, PartitionValue, RegisterOptions,
+    RegisterResult, SkippedFile, SkippedReason,
+};
 pub use catalog::{RestAuthProvider, RestCatalog, RestCatalogBuilder};
 
 #[cfg(not(target_family = "wasm"))]

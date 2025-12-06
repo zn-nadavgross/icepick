@@ -13,13 +13,15 @@ use parquet::schema::types::Type;
 use crate::arrow_convert::arrow_schema_to_iceberg;
 use crate::error::{Error, Result};
 use crate::io::FileIO;
-use crate::spec::{DataContentType, PartitionSpec, Schema};
+use crate::spec::{DataContentType, PartitionField, PartitionSpec, Schema};
 
 use super::types::{DataFileFormat, DataFileInput, FileMetrics, PartitionValue};
 
 /// Inspect a Parquet file and produce a `DataFileInput` plus schema.
 ///
 /// Uses footer-only reads to avoid buffering the entire file.
+/// Hive-style partitions are inferred strictly: missing or malformed `key=value`
+/// segments for a provided `PartitionSpec` return a partition validation error.
 pub async fn introspect_parquet_file(
     file_io: &FileIO,
     path: &str,
@@ -94,11 +96,11 @@ pub async fn introspect_parquet_file(
     let metrics = build_metrics(&metadata);
     let split_offsets = collect_split_offsets(&metadata);
 
-    let mut partition_values = HashMap::new();
-    if let Some(spec) = partition_spec {
-        let inferred = infer_partition_values_from_path(spec, &schema, path);
-        partition_values.extend(inferred);
-    }
+    let partition_values = if let Some(spec) = partition_spec {
+        infer_partition_values_from_path(spec, &schema, path)?
+    } else {
+        HashMap::new()
+    };
 
     let partition_values_for_data_file = partition_values.clone();
 
@@ -130,49 +132,122 @@ pub struct ParquetIntrospection {
 }
 
 /// Infer partition values from a path like `col1=value1/col2=5/part-000.parquet`.
+///
+/// This is intentionally strict when a partition spec is provided:
+/// - Missing required `key=value` segments trigger a `partition_validation` error
+/// - Malformed or type-mismatched values also error
+///
+/// This keeps register/introspection flows from silently dropping partition pruning.
 pub fn infer_partition_values_from_path(
     partition_spec: &PartitionSpec,
     schema: &Schema,
     path: &str,
-) -> HashMap<String, PartitionValue> {
+) -> Result<HashMap<String, PartitionValue>> {
     let mut values = HashMap::new();
-    let segments: Vec<&str> = path.split('/').collect();
+    let hive_segments = parse_hive_partition_values(path);
 
     for field in partition_spec.fields() {
         let expected_name = field.name();
-        if let Some((_, value_str)) = segments
-            .iter()
-            .rev()
-            .find_map(|segment| segment.split_once('=').filter(|(k, _)| k == &expected_name))
-        {
-            let parsed_value = parse_partition_value(schema, field.source_id(), value_str);
-            if let Some(value) = parsed_value {
-                values.insert(expected_name.to_string(), value);
+        let raw_value = hive_segments.get(expected_name).ok_or_else(|| {
+            Error::partition_validation(format!(
+                "Missing partition segment '{}' in path '{}'",
+                expected_name, path
+            ))
+        })?;
+
+        let value = parse_partition_value(schema, field, raw_value).map_err(|err| {
+            Error::partition_validation(format!(
+                "Failed to parse partition value for '{}': {} (path: {})",
+                expected_name, err, path
+            ))
+        })?;
+
+        values.insert(expected_name.to_string(), value);
+    }
+
+    Ok(values)
+}
+
+/// Extract Hive-style `key=value` segments from a path.
+fn parse_hive_partition_values(path: &str) -> HashMap<String, String> {
+    path.rsplit_once('/')
+        .map(|(dirs, file)| (dirs, Some(file)))
+        .unwrap_or((path, None))
+        .0
+        .split('/')
+        .filter_map(|segment| {
+            let mut parts = segment.splitn(2, '=');
+            match (parts.next(), parts.next()) {
+                (Some(key), Some(value)) if !key.is_empty() => {
+                    Some((key.to_string(), value.to_string()))
+                }
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+fn parse_partition_value(
+    schema: &Schema,
+    field: &PartitionField,
+    raw: &str,
+) -> std::result::Result<PartitionValue, String> {
+    let transform = field.transform().to_ascii_lowercase();
+    match transform.as_str() {
+        "year" | "month" | "day" | "hour" => {
+            return raw
+                .parse::<i32>()
+                .map(PartitionValue::Int)
+                .map_err(|err| format!("expected integer for {} transform: {err}", transform));
+        }
+        "identity" => { /* fall through to source type parsing */ }
+        _ => {
+            if transform.starts_with("bucket[") || transform.starts_with("truncate[") {
+                if let Ok(value) = raw.parse::<i32>() {
+                    return Ok(PartitionValue::Int(value));
+                }
             }
         }
     }
 
-    values
+    parse_partition_value_by_source_type(schema, field.source_id(), raw)
 }
 
-fn parse_partition_value(schema: &Schema, source_id: i32, raw: &str) -> Option<PartitionValue> {
+fn parse_partition_value_by_source_type(
+    schema: &Schema,
+    source_id: i32,
+    raw: &str,
+) -> std::result::Result<PartitionValue, String> {
     use crate::spec::PrimitiveType;
 
-    let field = schema.fields().iter().find(|f| f.id() == source_id)?;
+    let field = schema
+        .fields()
+        .iter()
+        .find(|f| f.id() == source_id)
+        .ok_or_else(|| format!("source field id {} not found in schema", source_id))?;
+
     match field.field_type() {
-        crate::spec::Type::Primitive(PrimitiveType::Boolean) => {
-            raw.parse::<bool>().ok().map(PartitionValue::Bool)
+        crate::spec::Type::Primitive(PrimitiveType::Boolean) => raw
+            .parse::<bool>()
+            .map(PartitionValue::Bool)
+            .map_err(|err| format!("expected boolean: {err}")),
+        crate::spec::Type::Primitive(PrimitiveType::Int)
+        | crate::spec::Type::Primitive(PrimitiveType::Date) => raw
+            .parse::<i32>()
+            .map(PartitionValue::Int)
+            .map_err(|err| format!("expected int: {err}")),
+        crate::spec::Type::Primitive(PrimitiveType::Long)
+        | crate::spec::Type::Primitive(PrimitiveType::Time)
+        | crate::spec::Type::Primitive(PrimitiveType::Timestamp)
+        | crate::spec::Type::Primitive(PrimitiveType::Timestamptz) => raw
+            .parse::<i64>()
+            .map(PartitionValue::Long)
+            .map_err(|err| format!("expected long: {err}")),
+        crate::spec::Type::Primitive(PrimitiveType::String)
+        | crate::spec::Type::Primitive(PrimitiveType::Uuid) => {
+            Ok(PartitionValue::String(raw.to_string()))
         }
-        crate::spec::Type::Primitive(PrimitiveType::Int) => {
-            raw.parse::<i32>().ok().map(PartitionValue::Int)
-        }
-        crate::spec::Type::Primitive(PrimitiveType::Long) => {
-            raw.parse::<i64>().ok().map(PartitionValue::Long)
-        }
-        crate::spec::Type::Primitive(PrimitiveType::String) => {
-            Some(PartitionValue::String(raw.to_string()))
-        }
-        _ => Some(PartitionValue::String(raw.to_string())),
+        _ => Ok(PartitionValue::String(raw.to_string())),
     }
 }
 
@@ -351,3 +426,6 @@ fn collect_split_offsets(metadata: &ParquetMetaData) -> Vec<i64> {
         .filter_map(|rg| rg.file_offset())
         .collect()
 }
+
+#[cfg(test)]
+mod tests;

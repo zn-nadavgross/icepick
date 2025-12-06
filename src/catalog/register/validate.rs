@@ -55,9 +55,19 @@ fn validate_partition_value_type(value: &PartitionValue, source_field: &NestedFi
     let field_type = source_field.field_type();
     match (field_type, value) {
         (crate::spec::Type::Primitive(PrimitiveType::Boolean), PartitionValue::Bool(_)) => Ok(()),
-        (crate::spec::Type::Primitive(PrimitiveType::Int), PartitionValue::Int(_)) => Ok(()),
+        (
+            crate::spec::Type::Primitive(PrimitiveType::Int)
+            | crate::spec::Type::Primitive(PrimitiveType::Date),
+            PartitionValue::Int(_),
+        ) => Ok(()),
         (
             crate::spec::Type::Primitive(PrimitiveType::Long),
+            PartitionValue::Long(_) | PartitionValue::Int(_),
+        ) => Ok(()),
+        (
+            crate::spec::Type::Primitive(PrimitiveType::Time)
+            | crate::spec::Type::Primitive(PrimitiveType::Timestamp)
+            | crate::spec::Type::Primitive(PrimitiveType::Timestamptz),
             PartitionValue::Long(_) | PartitionValue::Int(_),
         ) => Ok(()),
         (crate::spec::Type::Primitive(PrimitiveType::String), PartitionValue::String(_)) => Ok(()),

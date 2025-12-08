@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use super::validate::validate_partitions;
 use crate::catalog::Catalog;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::spec::{DataContentType, DataFile, PartitionSpec, Schema};
 use crate::writer::SchemaEvolutionPolicy;
 
@@ -79,6 +79,7 @@ impl DataFileInput {
         partition_spec: Option<&PartitionSpec>,
         table_schema: &Schema,
     ) -> Result<DataFile> {
+        validate_absolute_file_path(&self.file_path)?;
         validate_partitions(&self.partition_values, partition_spec, table_schema)?;
 
         let mut builder = DataFile::builder()
@@ -123,6 +124,20 @@ impl DataFileInput {
         }
 
         builder.build()
+    }
+}
+
+fn validate_absolute_file_path(path: &str) -> Result<()> {
+    let has_scheme = path.contains("://");
+    let is_rooted = path.starts_with('/');
+
+    if has_scheme || is_rooted {
+        Ok(())
+    } else {
+        Err(Error::invalid_input(format!(
+            "Data file path must be an absolute URI (e.g. s3://bucket/path), got '{}'",
+            path
+        )))
     }
 }
 

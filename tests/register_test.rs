@@ -241,3 +241,31 @@ async fn register_allow_noop_when_all_skipped() {
     assert_eq!(result.added_records, 0);
     assert_eq!(result.skipped_files.len(), 1);
 }
+
+#[tokio::test]
+async fn register_rejects_relative_paths() {
+    let op = Operator::via_iter(opendal::Scheme::Memory, []).unwrap();
+    let file_io = FileIO::new(op);
+    let table = build_table(&file_io);
+    let catalog = RefreshingCatalog::new(table.clone());
+
+    let namespace = table.identifier().namespace().clone();
+    let table_ident = table.identifier().clone();
+
+    let err = register_data_files(
+        &catalog,
+        namespace,
+        table_ident,
+        vec![sample_input("logs/part-1.parquet")],
+        RegisterOptions::new().with_timestamp_ms(123),
+    )
+    .await
+    .expect_err("relative paths should be rejected");
+
+    match err {
+        Error::InvalidInput(msg) => {
+            assert!(msg.contains("absolute URI"), "unexpected message: {}", msg);
+        }
+        other => panic!("expected InvalidInput, got {other:?}"),
+    }
+}

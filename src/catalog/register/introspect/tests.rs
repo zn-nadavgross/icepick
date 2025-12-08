@@ -103,7 +103,8 @@ async fn introspect_parquet_file_populates_partition_values() {
 
     let op = Operator::via_iter(opendal::Scheme::Memory, []).unwrap();
     let file_io = FileIO::new(op);
-    let path = "logs/year=2025/month=12/day=06/hour=15/file.parquet";
+    // Use an absolute URI to satisfy DataFileInput validation
+    let path = "memory://logs/year=2025/month=12/day=06/hour=15/file.parquet";
     writer.finish(&file_io, path.to_string()).await.unwrap();
 
     let spec = PartitionSpec::new(

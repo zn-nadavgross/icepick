@@ -9,7 +9,7 @@
 ```toml
 # Add to Cargo.toml
 [dependencies]
-icepick = "0.1"
+icepick = "0.3"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -74,7 +74,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 Module Structure:
 ├── catalog/          # Catalog implementations (S3TablesCatalog, R2Catalog)
 │   ├── auth/        # Authentication (SigV4, bearer tokens)
-│   └── rest/        # REST catalog protocol
+│   ├── rest/        # REST catalog protocol
+│   └── register/    # Register existing Parquet files without rewriting
 ├── spec/            # Iceberg specification types (Schema, TableIdent, etc.)
 ├── table/           # Table representation and operations
 ├── transaction/     # Write operations with ACID guarantees
@@ -95,6 +96,8 @@ Module Structure:
 5. **Transaction::append().commit()** - Append data files atomically
 6. **TableScan::to_arrow()** - Read table as Arrow RecordBatch stream
 7. **arrow_to_parquet()** - Write Arrow data directly to S3 without Iceberg metadata
+8. **register_data_files()** - Register existing Parquet files without rewriting data
+9. **introspect_parquet_file()** - Extract schema, row count, and metrics from Parquet footer
 
 ## COMMON PATTERNS
 
@@ -201,6 +204,34 @@ arrow_to_parquet(&batch, "s3://bucket/data.parquet", &file_io).await?;
 arrow_to_parquet(&batch, "s3://bucket/data.parquet", &file_io)
     .with_compression(Compression::ZSTD(Default::default()))
     .await?;
+```
+
+### Pattern 5: Register existing Parquet files
+
+```rust
+use icepick::{introspect_parquet_file, DataFileRegistrar, RegisterOptions};
+use icepick::spec::{NamespaceIdent, TableIdent};
+
+// Introspect file to get metadata (schema, row count, size, partition values)
+let introspection = introspect_parquet_file(
+    catalog.file_io(),
+    "s3://bucket/data/year=2025/file.parquet",
+    Some(&partition_spec), // extracts Hive-style partition values from path
+).await?;
+
+// Register files - creates table if needed, skips already-committed files
+let options = RegisterOptions::new()
+    .allow_create_with_schema(introspection.schema.clone())
+    .allow_noop(true); // idempotent
+
+let result = catalog.register_data_files(
+    namespace,
+    table_ident,
+    vec![introspection.data_file],
+    options,
+).await?;
+
+println!("Added {} files, {} records", result.added_files, result.added_records);
 ```
 
 ## INTEGRATION POINTS

@@ -180,6 +180,32 @@ impl FileIO {
             .map_err(|e| Error::IoError(format!("Failed to read {}: {}", path, e)))
     }
 
+    /// Read a byte range from a file `[offset, offset + length)`
+    pub async fn read_range(&self, path: &str, offset: u64, length: u64) -> Result<Vec<u8>> {
+        let operator = self.get_operator_for_path(path).await?;
+        let normalized = self.normalize_path(path);
+        let start = offset;
+        let end = offset.saturating_add(length);
+        let range = start..end;
+        operator
+            .read_with(normalized)
+            .range(range)
+            .await
+            .map(|b| b.to_vec())
+            .map_err(|e| Error::IoError(format!("Failed to read range of {}: {}", path, e)))
+    }
+
+    /// Get file size in bytes
+    pub async fn file_size(&self, path: &str) -> Result<u64> {
+        let operator = self.get_operator_for_path(path).await?;
+        let normalized = self.normalize_path(path);
+        operator
+            .stat(normalized)
+            .await
+            .map(|m| m.content_length())
+            .map_err(|e| Error::IoError(format!("Failed to stat {}: {}", path, e)))
+    }
+
     /// Write data to a file
     pub async fn write(&self, path: &str, data: Vec<u8>) -> Result<()> {
         let operator = self.get_operator_for_path(path).await?;

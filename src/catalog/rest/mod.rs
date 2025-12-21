@@ -348,6 +348,11 @@ impl IcebergRestCatalog {
         }
     }
 
+    /// Return a reference to the underlying FileIO.
+    pub fn file_io(&self) -> &FileIO {
+        &self.file_io
+    }
+
     /// Wrap a catalog operation with application-level retry logic based on error type.
     ///
     /// This implements retry behavior configured via `RetryConfig` for transient errors

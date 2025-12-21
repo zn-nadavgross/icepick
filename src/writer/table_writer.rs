@@ -43,7 +43,7 @@ impl AppendResult {
 }
 
 /// Schema evolution policy for handling schema changes
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum SchemaEvolutionPolicy {
     /// Reject batches with different schemas (safe default)
     #[default]

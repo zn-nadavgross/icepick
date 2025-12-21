@@ -3,6 +3,7 @@
 mod auth;
 mod options;
 pub mod r2;
+pub mod register;
 pub(crate) mod rest;
 pub mod rest_catalog;
 pub mod retry;

@@ -45,7 +45,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-icepick = "0.1"
+icepick = "0.3"
 ```
 
 ## Quick Start
@@ -199,6 +199,50 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 **Note:** This writes standalone Parquet files without Iceberg metadata. For writing to Iceberg tables, use the `Transaction` API instead.
 
+## Registering Existing Parquet Files
+
+Already have Parquet files in object storage? Register them into an Iceberg table without rewriting data:
+
+```rust
+use icepick::{R2Catalog, introspect_parquet_file, DataFileRegistrar, RegisterOptions};
+use icepick::spec::{NamespaceIdent, TableIdent};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let catalog = R2Catalog::new("my-catalog", "account-id", "bucket", "token").await?;
+
+    let namespace = NamespaceIdent::new(vec!["my_namespace".to_string()]);
+    let table_ident = TableIdent::new(namespace.clone(), "my_table".to_string());
+
+    // Introspect existing Parquet file to get schema, row count, size
+    let introspection = introspect_parquet_file(
+        catalog.file_io(),
+        "s3://bucket/path/to/file.parquet",
+        None, // partition spec (optional)
+    ).await?;
+
+    // Register the file - creates table if needed
+    let options = RegisterOptions::new()
+        .allow_create_with_schema(introspection.schema.clone())
+        .allow_noop(true); // idempotent - skip already-registered files
+
+    let result = catalog.register_data_files(
+        namespace,
+        table_ident,
+        vec![introspection.data_file],
+        options,
+    ).await?;
+
+    println!("Registered {} files ({} records)", result.added_files, result.added_records);
+    Ok(())
+}
+```
+
+This is useful for:
+- Migrating existing Parquet datasets to Iceberg
+- Registering files written by external tools (Spark, DuckDB, etc.)
+- "Write to S3, register later" workflows in serverless environments
+
 ## Examples
 
 Explore complete working examples in the [`examples/`](examples/) directory:
@@ -207,6 +251,7 @@ Explore complete working examples in the [`examples/`](examples/) directory:
 |---------|-------------|---------|
 | [`s3_tables_basic.rs`](examples/s3_tables_basic.rs) | Complete S3 Tables workflow | `cargo run --example s3_tables_basic` |
 | [`r2_basic.rs`](examples/r2_basic.rs) | Complete R2 Data Catalog workflow | `cargo run --example r2_basic` |
+| [`r2_register.rs`](examples/r2_register.rs) | Register existing Parquet files | `cargo run --example r2_register` |
 
 ## Development
 

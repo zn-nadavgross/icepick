@@ -233,6 +233,11 @@ impl R2Catalog {
 
         Ok(Self { inner })
     }
+
+    /// Return a reference to the underlying FileIO for reading data files.
+    pub fn file_io(&self) -> &crate::io::FileIO {
+        self.inner.file_io()
+    }
 }
 
 // Implement Catalog trait by delegating to inner IcebergRestCatalog (native platforms)

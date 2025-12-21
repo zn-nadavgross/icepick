@@ -83,6 +83,23 @@ pub fn data_file_to_avro(data_file: &DataFile) -> Result<Value> {
     };
     fields.push(("null_value_counts".to_string(), null_value_counts));
 
+    // Optional split offsets
+    let split_offsets = if let Some(offsets) = data_file.split_offsets() {
+        let array: Vec<Value> = offsets.iter().map(|offset| Value::Long(*offset)).collect();
+        Value::Union(1, Box::new(Value::Array(array)))
+    } else {
+        Value::Union(0, Box::new(Value::Null))
+    };
+    fields.push(("split_offsets".to_string(), split_offsets));
+
+    // Optional key metadata (encryption)
+    let key_metadata = if let Some(bytes) = data_file.key_metadata() {
+        Value::Union(1, Box::new(Value::Bytes(bytes.to_vec())))
+    } else {
+        Value::Union(0, Box::new(Value::Null))
+    };
+    fields.push(("key_metadata".to_string(), key_metadata));
+
     // Optional lower_bounds (array of key-value records)
     let lower_bounds = if let Some(bounds) = data_file.lower_bounds() {
         let array: Vec<Value> = bounds
@@ -118,14 +135,6 @@ pub fn data_file_to_avro(data_file: &DataFile) -> Result<Value> {
     fields.push(("upper_bounds".to_string(), upper_bounds));
 
     // Optional fields set to null for MVP
-    fields.push((
-        "key_metadata".to_string(),
-        Value::Union(0, Box::new(Value::Null)),
-    ));
-    fields.push((
-        "split_offsets".to_string(),
-        Value::Union(0, Box::new(Value::Null)),
-    ));
     fields.push((
         "equality_ids".to_string(),
         if let Some(ids) = data_file.equality_ids() {

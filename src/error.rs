@@ -68,6 +68,18 @@ pub enum Error {
     /// Concurrent modification detected (optimistic locking failure)
     #[error("Concurrent modification detected: {message}")]
     ConcurrentModification { message: String },
+
+    /// Registration would not change table state
+    #[error("Registration made no changes: {message}")]
+    NoopRegistration { message: String },
+
+    /// Schema validation failed for registration
+    #[error("Schema mismatch: {message}")]
+    SchemaMismatch { message: String },
+
+    /// Partition validation failed for registration
+    #[error("Partition validation failed: {message}")]
+    PartitionValidation { message: String },
 }
 
 impl Error {
@@ -137,6 +149,27 @@ impl Error {
     /// Create a ConcurrentModification error
     pub fn concurrent_modification(message: impl Into<String>) -> Self {
         Self::ConcurrentModification {
+            message: message.into(),
+        }
+    }
+
+    /// Create a NoopRegistration error
+    pub fn noop_registration(message: impl Into<String>) -> Self {
+        Self::NoopRegistration {
+            message: message.into(),
+        }
+    }
+
+    /// Create a SchemaMismatch error
+    pub fn schema_mismatch(message: impl Into<String>) -> Self {
+        Self::SchemaMismatch {
+            message: message.into(),
+        }
+    }
+
+    /// Create a PartitionValidation error
+    pub fn partition_validation(message: impl Into<String>) -> Self {
+        Self::PartitionValidation {
             message: message.into(),
         }
     }

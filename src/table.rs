@@ -2,6 +2,10 @@
 
 use crate::error::Result;
 use crate::io::FileIO;
+#[cfg(feature = "maintenance")]
+use crate::maintenance::{
+    expire_snapshots, CatalogMaintenance, ExpireSnapshotsOptions, ExpireSnapshotsResult,
+};
 use crate::reader::{DataFileEntry, ManifestListReader, ManifestReader};
 use crate::scan::TableScanBuilder;
 use crate::spec::{Schema, Snapshot, TableIdent, TableMetadata};
@@ -103,6 +107,45 @@ impl Table {
     /// For the MVP, this provides basic sequential reading without filtering.
     pub fn scan(&self) -> TableScanBuilder<'_> {
         TableScanBuilder::new(self)
+    }
+
+    /// Expire old snapshots and optionally clean up orphaned files.
+    #[cfg(feature = "maintenance")]
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the catalog does not support snapshot removal
+    /// or if the expiration options are invalid.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use icepick::maintenance::ExpireSnapshotsOptions;
+    /// use icepick::catalog::Catalog;
+    /// use icepick::R2Catalog;
+    /// use icepick::spec::TableIdent;
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let catalog = R2Catalog::new("catalog", "account", "bucket", "token").await?;
+    /// let table_id = TableIdent::from_strs(&["namespace"], "table");
+    /// let table = catalog.load_table(&table_id).await?;
+    /// let options = ExpireSnapshotsOptions {
+    ///     older_than_ms: Some(chrono::Utc::now().timestamp_millis() - 86_400_000),
+    ///     retain_last: Some(1),
+    ///     ..Default::default()
+    /// };
+    ///
+    /// let result = table.expire_snapshots(&catalog, options).await?;
+    /// println!("Expired snapshots: {}", result.expired_snapshot_ids.len());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn expire_snapshots(
+        &self,
+        catalog: &dyn CatalogMaintenance,
+        options: ExpireSnapshotsOptions,
+    ) -> Result<ExpireSnapshotsResult> {
+        expire_snapshots(self, catalog, options).await
     }
 }
 

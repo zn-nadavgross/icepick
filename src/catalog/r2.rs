@@ -6,6 +6,8 @@
 use crate::catalog::rest::IcebergRestCatalog;
 use crate::catalog::{map_catalog_error, Catalog, CatalogOptions};
 use crate::error::Result;
+#[cfg(feature = "maintenance")]
+use crate::maintenance::CatalogMaintenance;
 use crate::spec::{NamespaceIdent, TableCreation, TableIdent};
 use crate::table::Table;
 use async_trait::async_trait;
@@ -292,6 +294,23 @@ impl Catalog for R2Catalog {
     }
 }
 
+// Implement CatalogMaintenance by delegating to the inner REST catalog (native).
+#[cfg(all(feature = "maintenance", not(target_family = "wasm")))]
+#[async_trait]
+impl CatalogMaintenance for R2Catalog {
+    async fn remove_snapshots(
+        &self,
+        identifier: &TableIdent,
+        table_uuid: &str,
+        current_snapshot_id: Option<i64>,
+        snapshot_ids: Vec<i64>,
+    ) -> Result<()> {
+        self.inner
+            .remove_snapshots_impl(identifier, table_uuid, current_snapshot_id, snapshot_ids)
+            .await
+    }
+}
+
 // Implement Catalog trait by delegating to inner IcebergRestCatalog (WASM platforms)
 #[cfg(target_family = "wasm")]
 #[async_trait(?Send)]
@@ -340,6 +359,23 @@ impl Catalog for R2Catalog {
     ) -> Result<()> {
         self.inner
             .update_table_metadata(identifier, old_metadata_location, new_metadata_location)
+            .await
+    }
+}
+
+// Implement CatalogMaintenance by delegating to the inner REST catalog (WASM).
+#[cfg(all(feature = "maintenance", target_family = "wasm"))]
+#[async_trait(?Send)]
+impl CatalogMaintenance for R2Catalog {
+    async fn remove_snapshots(
+        &self,
+        identifier: &TableIdent,
+        table_uuid: &str,
+        current_snapshot_id: Option<i64>,
+        snapshot_ids: Vec<i64>,
+    ) -> Result<()> {
+        self.inner
+            .remove_snapshots_impl(identifier, table_uuid, current_snapshot_id, snapshot_ids)
             .await
     }
 }

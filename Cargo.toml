@@ -12,6 +12,10 @@ readme = "README.md"
 keywords = ["iceberg", "parquet", "data", "s3", "wasm"]
 categories = ["database", "web-programming"]
 
+[features]
+default = []
+maintenance = []
+
 [dependencies]
 # HTTP and serialization
 http = "1.0"
@@ -26,7 +30,7 @@ apache-avro = "0.21"
 arrow = { version = "56.2.0", default-features = false, features = ["prettyprint"] }
 parquet = { version = "56.2.0", default-features = false, features = ["arrow"] }
 flate2 = "1.1.5"
-futures = "0.3"
+futures = { version = "0.3", default-features = false, features = ["alloc"] }
 bytes = "1.0"
 tracing = { version = "0.1", features = ["std"] }
 chrono = { version = "0.4.42", features = ["serde"] }
@@ -50,7 +54,7 @@ tokio = { version = "1.48.0", features = ["full"] }
 anyhow = "1.0.100"
 arrow = { version = "56.2.0", features = ["prettyprint"] }
 parquet = "56.2.0"
-futures = "0.3"
+futures = { version = "0.3", default-features = false, features = ["alloc"] }
 uuid = { version = "1.11", features = ["v4"] }
 dotenvy = "0.15"
 percent-encoding = "2.3"

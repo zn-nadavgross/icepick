@@ -371,6 +371,52 @@ impl IcebergRestCatalog {
         Ok(())
     }
 
+    #[cfg(feature = "maintenance")]
+    pub(crate) async fn remove_snapshots_impl(
+        &self,
+        identifier: &crate::spec::TableIdent,
+        table_uuid: &str,
+        current_snapshot_id: Option<i64>,
+        snapshot_ids: Vec<i64>,
+    ) -> crate::error::Result<()> {
+        if snapshot_ids.is_empty() {
+            return Ok(());
+        }
+
+        if !commit_table_enabled() {
+            return Err(crate::error::Error::invalid_input(
+                "remove-snapshots requires the commit-table API",
+            ));
+        }
+
+        let snapshot_id_requirement = if current_snapshot_id == Some(-1) {
+            None
+        } else {
+            current_snapshot_id
+        };
+
+        let reference = self.options.reference().to_string();
+        let requirements = vec![
+            TableRequirement::AssertTableUuid {
+                uuid: table_uuid.to_string(),
+            },
+            TableRequirement::AssertRefSnapshotId {
+                r#ref: reference,
+                snapshot_id: snapshot_id_requirement,
+            },
+        ];
+
+        let request = CommitTableRequest {
+            requirements,
+            updates: vec![TableUpdate::RemoveSnapshots { snapshot_ids }],
+        };
+
+        self.commit_table(identifier, request)
+            .await
+            .map_err(helpers::from_catalog_error)?;
+        Ok(())
+    }
+
     fn build_request(
         &self,
         builder: reqwest::RequestBuilder,

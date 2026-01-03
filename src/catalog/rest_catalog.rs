@@ -2,6 +2,8 @@ use super::rest::IcebergRestCatalog;
 use super::{map_catalog_error, AuthProvider, Catalog, CatalogError, CatalogOptions, RetryConfig};
 use crate::error::{Error, Result};
 use crate::io::FileIO;
+#[cfg(feature = "maintenance")]
+use crate::maintenance::CatalogMaintenance;
 use crate::spec::{NamespaceIdent, TableCreation, TableIdent};
 use crate::table::Table;
 use async_trait::async_trait;
@@ -287,6 +289,23 @@ impl Catalog for RestCatalog {
     }
 }
 
+// Implement CatalogMaintenance for native targets.
+#[cfg(all(feature = "maintenance", not(target_family = "wasm")))]
+#[async_trait]
+impl CatalogMaintenance for RestCatalog {
+    async fn remove_snapshots(
+        &self,
+        identifier: &TableIdent,
+        table_uuid: &str,
+        current_snapshot_id: Option<i64>,
+        snapshot_ids: Vec<i64>,
+    ) -> Result<()> {
+        self.inner
+            .remove_snapshots_impl(identifier, table_uuid, current_snapshot_id, snapshot_ids)
+            .await
+    }
+}
+
 // Implement Catalog trait for WASM targets without Send requirement.
 #[cfg(target_family = "wasm")]
 #[async_trait(?Send)]
@@ -335,6 +354,23 @@ impl Catalog for RestCatalog {
     ) -> Result<()> {
         self.inner
             .update_table_metadata(identifier, old_metadata_location, new_metadata_location)
+            .await
+    }
+}
+
+// Implement CatalogMaintenance for WASM targets without Send requirement.
+#[cfg(all(feature = "maintenance", target_family = "wasm"))]
+#[async_trait(?Send)]
+impl CatalogMaintenance for RestCatalog {
+    async fn remove_snapshots(
+        &self,
+        identifier: &TableIdent,
+        table_uuid: &str,
+        current_snapshot_id: Option<i64>,
+        snapshot_ids: Vec<i64>,
+    ) -> Result<()> {
+        self.inner
+            .remove_snapshots_impl(identifier, table_uuid, current_snapshot_id, snapshot_ids)
             .await
     }
 }

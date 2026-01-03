@@ -52,6 +52,8 @@ pub mod catalog;
 pub mod commit;
 pub mod error;
 pub mod io;
+#[cfg(feature = "maintenance")]
+pub mod maintenance;
 pub mod manifest;
 pub mod reader;
 pub mod scan;
@@ -63,6 +65,8 @@ pub mod writer;
 // Re-export common types
 pub use error::{Error, Result};
 pub use io::FileIO;
+#[cfg(feature = "maintenance")]
+pub use maintenance::{CatalogMaintenance, ExpireSnapshotsOptions, ExpireSnapshotsResult};
 pub use reader::DataFileEntry;
 pub use scan::{ArrowRecordBatchStream, TableScan, TableScanBuilder};
 pub use spec::{

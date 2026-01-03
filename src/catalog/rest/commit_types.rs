@@ -75,6 +75,18 @@ pub enum TableUpdate {
         max_ref_age_ms: Option<i64>,
     },
 
+    #[serde(rename = "remove-snapshots")]
+    RemoveSnapshots {
+        #[serde(rename = "snapshot-ids")]
+        snapshot_ids: Vec<i64>,
+    },
+
+    #[serde(rename = "remove-snapshot-ref")]
+    RemoveSnapshotRef {
+        #[serde(rename = "ref-name")]
+        ref_name: String,
+    },
+
     #[serde(rename = "upgrade-format-version")]
     UpgradeFormatVersion {
         #[serde(rename = "format-version")]
@@ -136,6 +148,9 @@ mod tests {
                     max_snapshot_age_ms: None,
                     max_ref_age_ms: None,
                 },
+                TableUpdate::RemoveSnapshots {
+                    snapshot_ids: vec![1, 2, 3],
+                },
             ],
         };
 
@@ -144,5 +159,6 @@ mod tests {
         assert!(json.contains("assert-table-uuid"));
         assert!(json.contains("set-snapshot-ref"));
         assert!(json.contains("set-current-table-metadata"));
+        assert!(json.contains("remove-snapshots"));
     }
 }

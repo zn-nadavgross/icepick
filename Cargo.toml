@@ -15,6 +15,10 @@ categories = ["database", "web-programming"]
 [[bin]]
 name = "icepick"
 path = "src/bin/icepick.rs"
+required-features = ["cli"]
+
+[features]
+cli = []
 
 [dependencies]
 # HTTP and serialization

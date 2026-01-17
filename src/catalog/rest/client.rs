@@ -1,12 +1,12 @@
 //! Client constructor methods for IcebergRestCatalog
-
 use super::commit_types::{CommitTableRequest, CommitTableResponse};
+use super::credentials::RestCredentialProvider;
 use super::types;
 use super::IcebergRestCatalog;
 use crate::catalog::{
     AuthProvider, CatalogError, CatalogOptions, HttpClientConfig, R2Config, Result,
 };
-use crate::io::{FileIO, VendedCredentialProvider};
+use crate::io::FileIO;
 use crate::spec::TableIdent;
 use reqwest::Client;
 use std::sync::Arc;
@@ -19,6 +19,48 @@ use aws_credential_types::provider::ProvideCredentials;
 
 #[cfg(not(target_family = "wasm"))]
 use percent_encoding::utf8_percent_encode;
+
+/// Fetch catalog configuration from /v1/config endpoint
+async fn fetch_config_response(
+    http_client: &Client,
+    auth: &dyn AuthProvider,
+    endpoint: &str,
+    warehouse: &str,
+) -> Result<types::ConfigResponse> {
+    let config_url = format!(
+        "{}/v1/config?warehouse={}",
+        endpoint.trim_end_matches('/'),
+        urlencoding::encode(warehouse)
+    );
+
+    let req = http_client
+        .get(&config_url)
+        .build()
+        .map_err(|e| CatalogError::HttpError(format!("Failed to build config request: {}", e)))?;
+
+    let signed_req = auth.sign_request(req).await?;
+
+    let response = http_client
+        .execute(signed_req)
+        .await
+        .map_err(|e| CatalogError::HttpError(format!("Config request failed: {}", e)))?;
+
+    let status = response.status();
+    let body_text = response
+        .text()
+        .await
+        .unwrap_or_else(|_| "Unable to read response".to_string());
+
+    if !status.is_success() {
+        return Err(CatalogError::HttpError(format!(
+            "Config request failed with status {}: {}",
+            status, body_text
+        )));
+    }
+
+    serde_json::from_str(&body_text)
+        .map_err(|e| CatalogError::HttpError(format!("Failed to parse config response: {}", e)))
+}
 
 impl IcebergRestCatalog {
     /// Create a generic Iceberg REST catalog from preconfigured components.
@@ -97,38 +139,9 @@ impl IcebergRestCatalog {
         // Construct warehouse name from account_id and bucket_name
         let warehouse = format!("{}_{}", config.account_id, config.bucket_name);
 
-        // Call /v1/config to get server configuration (per Iceberg REST spec)
-        let config_url = format!("{}/v1/config?warehouse={}", endpoint, warehouse);
-
-        let req = http_client.get(&config_url).build().map_err(|e| {
-            CatalogError::HttpError(format!("Failed to build config request: {}", e))
-        })?;
-
-        // Sign the request with auth
-        let signed_req = auth.sign_request(req).await?;
-
-        let response = http_client
-            .execute(signed_req)
-            .await
-            .map_err(|e| CatalogError::HttpError(format!("Config request failed: {}", e)))?;
-
-        let status = response.status();
-        let body_text = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "Unable to read response".to_string());
-
-        if !status.is_success() {
-            return Err(CatalogError::HttpError(format!(
-                "Config request failed with status {}: {}",
-                status, body_text
-            )));
-        }
-
-        let config_response: types::ConfigResponse =
-            serde_json::from_str(&body_text).map_err(|e| {
-                CatalogError::HttpError(format!("Failed to parse config response: {}", e))
-            })?;
+        // Fetch catalog configuration
+        let config_response =
+            fetch_config_response(&http_client, auth.as_ref(), &endpoint, &warehouse).await?;
 
         // Merge configuration: defaults < client properties < overrides
         let mut properties = config_response.defaults;
@@ -172,11 +185,7 @@ impl IcebergRestCatalog {
         })
     }
 
-    /// Create catalog for Cloudflare R2 with a pre-configured FileIO
-    ///
-    /// This is useful when you need to provide explicit credentials or custom FileIO configuration.
-    /// Unlike `from_r2_config_with_options`, this method doesn't create the FileIO automatically,
-    /// allowing the caller to provide a FileIO with explicit credentials.
+    /// Create catalog for Cloudflare R2 with a pre-configured FileIO (for explicit credentials)
     pub(crate) async fn from_r2_with_file_io(
         name: String,
         config: R2Config,
@@ -198,38 +207,9 @@ impl IcebergRestCatalog {
         // Construct warehouse name from account_id and bucket_name
         let warehouse = format!("{}_{}", config.account_id, config.bucket_name);
 
-        // Call /v1/config to get server configuration (per Iceberg REST spec)
-        let config_url = format!("{}/v1/config?warehouse={}", endpoint, warehouse);
-
-        let req = http_client.get(&config_url).build().map_err(|e| {
-            CatalogError::HttpError(format!("Failed to build config request: {}", e))
-        })?;
-
-        // Sign the request with auth
-        let signed_req = auth.sign_request(req).await?;
-
-        let response = http_client
-            .execute(signed_req)
-            .await
-            .map_err(|e| CatalogError::HttpError(format!("Config request failed: {}", e)))?;
-
-        let status = response.status();
-        let body_text = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "Unable to read response".to_string());
-
-        if !status.is_success() {
-            return Err(CatalogError::HttpError(format!(
-                "Config request failed with status {}: {}",
-                status, body_text
-            )));
-        }
-
-        let config_response: types::ConfigResponse =
-            serde_json::from_str(&body_text).map_err(|e| {
-                CatalogError::HttpError(format!("Failed to parse config response: {}", e))
-            })?;
+        // Fetch catalog configuration
+        let config_response =
+            fetch_config_response(&http_client, auth.as_ref(), &endpoint, &warehouse).await?;
 
         // Merge configuration: defaults < client properties < overrides
         let mut properties = config_response.defaults;
@@ -251,34 +231,7 @@ impl IcebergRestCatalog {
         })
     }
 
-    /// Create catalog from a catalog URL and bearer token.
-    ///
-    /// This is the simplest way to connect to any Iceberg REST catalog. The method:
-    /// 1. Calls `/v1/config` to discover the catalog prefix and storage configuration
-    /// 2. Sets up vended credential support for file access via the `/credentials` endpoint
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - Logical catalog name for identification
-    /// * `catalog_url` - Base URL of the catalog (e.g., `https://catalog.example.com/account/bucket`)
-    /// * `token` - Bearer token for authentication
-    /// * `warehouse` - Optional warehouse identifier. If not provided, derived from the URL path.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use icepick::catalog::rest::IcebergRestCatalog;
-    ///
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let catalog = IcebergRestCatalog::from_url(
-    ///     "my-catalog",
-    ///     "https://catalog.cloudflarestorage.com/account/bucket",
-    ///     "my-api-token",
-    ///     None, // derive warehouse from URL
-    /// ).await?;
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// Create catalog from a catalog URL and bearer token (calls /v1/config, sets up vended credentials)
     pub async fn from_url(
         name: impl Into<String>,
         catalog_url: impl Into<String>,
@@ -314,41 +267,9 @@ impl IcebergRestCatalog {
         let auth = Box::new(crate::catalog::BearerTokenAuthProvider::new(token.clone()));
         let http_client = build_http_client(options.http())?;
 
-        // Call /v1/config to get catalog configuration
-        let config_url = format!(
-            "{}/v1/config?warehouse={}",
-            endpoint.trim_end_matches('/'),
-            urlencoding::encode(&warehouse)
-        );
-
-        let req = http_client.get(&config_url).build().map_err(|e| {
-            CatalogError::HttpError(format!("Failed to build config request: {}", e))
-        })?;
-
-        let signed_req = auth.sign_request(req).await?;
-
-        let response = http_client
-            .execute(signed_req)
-            .await
-            .map_err(|e| CatalogError::HttpError(format!("Config request failed: {}", e)))?;
-
-        let status = response.status();
-        let body_text = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "Unable to read response".to_string());
-
-        if !status.is_success() {
-            return Err(CatalogError::HttpError(format!(
-                "Config request failed with status {}: {}",
-                status, body_text
-            )));
-        }
-
-        let config_response: types::ConfigResponse =
-            serde_json::from_str(&body_text).map_err(|e| {
-                CatalogError::HttpError(format!("Failed to parse config response: {}", e))
-            })?;
+        // Fetch catalog configuration
+        let config_response =
+            fetch_config_response(&http_client, auth.as_ref(), &endpoint, &warehouse).await?;
 
         // Merge configuration: defaults < overrides
         let mut properties = config_response.defaults;
@@ -506,19 +427,15 @@ impl IcebergRestCatalog {
 #[cfg(not(target_family = "wasm"))]
 fn build_http_client(config: &HttpClientConfig) -> Result<Client> {
     let mut builder = Client::builder();
-
     if let Some(timeout) = config.timeout() {
         builder = builder.timeout(timeout);
     }
-
     if let Some(connect_timeout) = config.connect_timeout() {
         builder = builder.connect_timeout(connect_timeout);
     }
-
     if let Some(user_agent) = config.user_agent() {
         builder = builder.user_agent(user_agent.to_string());
     }
-
     builder
         .build()
         .map_err(|e| CatalogError::HttpError(format!("Failed to build HTTP client: {}", e)))
@@ -531,10 +448,7 @@ fn build_http_client(_config: &HttpClientConfig) -> Result<Client> {
         .map_err(|e| CatalogError::HttpError(format!("Failed to build HTTP client: {}", e)))
 }
 
-/// Derive warehouse identifier from a catalog URL.
-///
-/// Extracts the last two path segments and joins them with underscore.
-/// Example: `https://catalog.example.com/account/bucket` -> `account_bucket`
+/// Derive warehouse from URL (last two path segments joined with underscore)
 fn derive_warehouse_from_url(url: &str) -> String {
     // Parse URL and extract path segments
     if let Ok(parsed) = url::Url::parse(url) {
@@ -558,112 +472,6 @@ fn derive_warehouse_from_url(url: &str) -> String {
 
     // Fallback: use the full URL as warehouse (will likely fail, but provides context)
     url.to_string()
-}
-
-/// Credential provider that fetches vended credentials from Iceberg REST catalog
-#[derive(Debug)]
-pub struct RestCredentialProvider {
-    endpoint: String,
-    prefix: String,
-    token: String,
-    http_client: Client,
-    s3_endpoint: Option<String>,
-}
-
-#[cfg_attr(not(target_family = "wasm"), async_trait::async_trait)]
-#[cfg_attr(target_family = "wasm", async_trait::async_trait(?Send))]
-impl VendedCredentialProvider for RestCredentialProvider {
-    async fn get_credentials(
-        &self,
-        path: &str,
-    ) -> std::result::Result<crate::io::VendedCredentials, crate::error::Error> {
-        // Extract namespace and table from path
-        // Path format: s3://bucket/__r2_data_catalog/{namespace_uuid}/{table_uuid}/...
-        // We need to find which table this path belongs to
-
-        // For now, we'll fetch credentials by parsing the path
-        // The R2 Data Catalog stores data in: s3://bucket/__r2_data_catalog/{ns_uuid}/{table_uuid}/...
-        let (namespace, table) = parse_table_from_path(path)?;
-
-        let url = format!(
-            "{}/v1/{}/namespaces/{}/tables/{}/credentials",
-            self.endpoint.trim_end_matches('/'),
-            self.prefix,
-            namespace,
-            table
-        );
-
-        let auth = crate::catalog::BearerTokenAuthProvider::new(self.token.clone());
-
-        let req =
-            self.http_client.get(&url).build().map_err(|e| {
-                crate::error::Error::IoError(format!("Failed to build request: {}", e))
-            })?;
-
-        let signed_req = auth
-            .sign_request_external(req)
-            .await
-            .map_err(|e| crate::error::Error::IoError(format!("Failed to sign request: {}", e)))?;
-
-        let response = self.http_client.execute(signed_req).await.map_err(|e| {
-            crate::error::Error::IoError(format!("Credentials request failed: {}", e))
-        })?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(crate::error::Error::IoError(format!(
-                "Credentials request failed with status {}: {}",
-                status, body
-            )));
-        }
-
-        let creds_response: types::LoadTableCredentialsResponse =
-            response.json().await.map_err(|e| {
-                crate::error::Error::IoError(format!("Failed to parse credentials: {}", e))
-            })?;
-
-        // Use the first credential (typically there's only one with prefix "/")
-        let cred = creds_response
-            .storage_credentials
-            .into_iter()
-            .next()
-            .ok_or_else(|| crate::error::Error::IoError("No credentials returned".to_string()))?;
-
-        Ok(crate::io::VendedCredentials {
-            access_key_id: cred.config.access_key_id.unwrap_or_default(),
-            secret_access_key: cred.config.secret_access_key.unwrap_or_default(),
-            session_token: cred.config.session_token,
-            endpoint: cred.config.endpoint.or_else(|| self.s3_endpoint.clone()),
-            region: cred.config.region,
-        })
-    }
-
-    fn s3_endpoint(&self) -> Option<&str> {
-        self.s3_endpoint.as_deref()
-    }
-}
-
-/// Parse namespace and table name from a data file path.
-///
-/// R2 Data Catalog paths have format:
-/// `s3://bucket/__r2_data_catalog/{namespace_uuid}/{table_uuid}/data/...`
-///
-/// For simplicity, we use "default" namespace since we can't reverse the UUID mapping.
-/// The credentials endpoint accepts namespace names, not UUIDs.
-fn parse_table_from_path(path: &str) -> std::result::Result<(String, String), crate::error::Error> {
-    // This is a simplified implementation.
-    // In practice, the catalog should track which tables have been loaded
-    // and use that to fetch credentials.
-
-    // For R2 catalogs, we can't easily reverse the UUID to table name mapping.
-    // The proper solution is to cache credentials when loading tables.
-
-    // Return an error - the caller should use cached credentials from table loading
-    Err(crate::error::Error::IoError(format!(
-        "Cannot determine table from path: {}. Use table-scoped FileIO instead.",
-        path
-    )))
 }
 
 #[cfg(test)]

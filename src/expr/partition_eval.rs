@@ -426,8 +426,9 @@ fn decode_partition_value(bytes: &[u8], field_type: Option<&Type>) -> Option<Dat
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::date::year_to_days;
+    use super::*;
+    use crate::PrimitiveType;
 
     #[test]
     fn test_transform_parse() {

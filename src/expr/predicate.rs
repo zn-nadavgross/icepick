@@ -1,28 +1,18 @@
 //! Predicate expressions for filtering Iceberg tables
-
 use crate::spec::PrimitiveType;
 use std::fmt;
 
-/// A scalar value for comparison
+/// A scalar value for comparison (Bool, Int, Long, Float, Double, String, Date, Timestamp, Binary)
 #[derive(Debug, Clone, PartialEq)]
 pub enum Datum {
-    /// Boolean value
     Bool(bool),
-    /// 32-bit integer
     Int(i32),
-    /// 64-bit integer
     Long(i64),
-    /// 32-bit float
     Float(f32),
-    /// 64-bit float
     Double(f64),
-    /// String value
     String(String),
-    /// Date as days since Unix epoch
     Date(i32),
-    /// Timestamp as microseconds since Unix epoch
     Timestamp(i64),
-    /// Binary data
     Binary(Vec<u8>),
 }
 
@@ -135,62 +125,35 @@ impl fmt::Display for Datum {
 }
 
 // Convenience From implementations
-impl From<bool> for Datum {
-    fn from(v: bool) -> Self {
-        Datum::Bool(v)
-    }
+macro_rules! impl_from_for_datum {
+    ($t:ty, $variant:ident) => {
+        impl From<$t> for Datum {
+            fn from(v: $t) -> Self {
+                Datum::$variant(v)
+            }
+        }
+    };
 }
-
-impl From<i32> for Datum {
-    fn from(v: i32) -> Self {
-        Datum::Int(v)
-    }
-}
-
-impl From<i64> for Datum {
-    fn from(v: i64) -> Self {
-        Datum::Long(v)
-    }
-}
-
-impl From<f32> for Datum {
-    fn from(v: f32) -> Self {
-        Datum::Float(v)
-    }
-}
-
-impl From<f64> for Datum {
-    fn from(v: f64) -> Self {
-        Datum::Double(v)
-    }
-}
-
-impl From<String> for Datum {
-    fn from(v: String) -> Self {
-        Datum::String(v)
-    }
-}
-
+impl_from_for_datum!(bool, Bool);
+impl_from_for_datum!(i32, Int);
+impl_from_for_datum!(i64, Long);
+impl_from_for_datum!(f32, Float);
+impl_from_for_datum!(f64, Double);
+impl_from_for_datum!(String, String);
 impl From<&str> for Datum {
     fn from(v: &str) -> Self {
         Datum::String(v.to_string())
     }
 }
 
-/// Binary comparison operators
+/// Binary comparison operators (Eq, NotEq, Lt, LtEq, Gt, GtEq)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComparisonOp {
-    /// Equal (=)
     Eq,
-    /// Not equal (!=)
     NotEq,
-    /// Less than (<)
     Lt,
-    /// Less than or equal (<=)
     LtEq,
-    /// Greater than (>)
     Gt,
-    /// Greater than or equal (>=)
     GtEq,
 }
 
@@ -278,51 +241,35 @@ impl From<String> for ColumnRef {
         ColumnRef::Named(v)
     }
 }
-
 impl From<&str> for ColumnRef {
     fn from(v: &str) -> Self {
         ColumnRef::Named(v.to_string())
     }
 }
-
 impl From<i32> for ColumnRef {
     fn from(v: i32) -> Self {
         ColumnRef::Id(v)
     }
 }
 
-/// A predicate expression for filtering
+/// Predicate expression for filtering (AlwaysTrue, AlwaysFalse, Comparison, IsNull, IsNotNull, In, And, Or, Not)
 #[derive(Debug, Clone, PartialEq)]
 pub enum Predicate {
-    /// Always evaluates to true
     AlwaysTrue,
-    /// Always evaluates to false
     AlwaysFalse,
-    /// Column comparison: column op value
     Comparison {
-        /// Column reference
         column: ColumnRef,
-        /// Comparison operator
         op: ComparisonOp,
-        /// Value to compare against
         value: Datum,
     },
-    /// Column IS NULL
     IsNull(ColumnRef),
-    /// Column IS NOT NULL
     IsNotNull(ColumnRef),
-    /// Column IN (values...)
     In {
-        /// Column reference
         column: ColumnRef,
-        /// Set of values
         values: Vec<Datum>,
     },
-    /// Logical AND of predicates
     And(Vec<Predicate>),
-    /// Logical OR of predicates
     Or(Vec<Predicate>),
-    /// Logical NOT of predicate
     Not(Box<Predicate>),
 }
 

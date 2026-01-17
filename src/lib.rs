@@ -49,7 +49,10 @@
 
 pub mod arrow_convert;
 pub mod catalog;
+#[cfg(not(target_family = "wasm"))]
+pub mod cli;
 pub mod commit;
+pub mod compact;
 pub mod error;
 pub mod io;
 pub mod manifest;
@@ -87,3 +90,9 @@ pub use catalog::{RestAuthProvider, RestCatalog, RestCatalogBuilder};
 
 #[cfg(not(target_family = "wasm"))]
 pub use catalog::s3_tables::S3TablesCatalog;
+
+// Re-export compaction types
+pub use compact::{
+    compact_table, execute_compaction, plan_compaction, CompactOptions, CompactionGroup,
+    CompactionPlan, CompactionResult, PartitionError, PartitionPlan,
+};

@@ -2,9 +2,12 @@
 
 use crate::commit::paths::{manifest_list_path, manifest_path, next_metadata_path};
 use crate::error::{Error, Result};
-use crate::manifest::writer::{write_manifest, write_manifest_list, ManifestListEntry};
+use crate::manifest::writer::{
+    write_manifest_list, write_manifest_with_entries, ManifestEntry, ManifestEntryStatus,
+    ManifestListEntry,
+};
 use crate::reader::ManifestListReader;
-use crate::spec::{Snapshot, Summary};
+use crate::spec::{DataFile, Snapshot, Summary};
 use crate::transaction::{Transaction, TransactionOperation};
 use tracing::debug;
 use uuid::Uuid;
@@ -37,6 +40,51 @@ fn generate_snapshot_id(table: &crate::table::Table) -> i64 {
     snapshot_id
 }
 
+/// Collected statistics from processing transaction operations
+struct OperationStats {
+    /// Files to add (from Append and Rewrite operations)
+    files_to_add: Vec<DataFile>,
+    /// Files to delete (from Rewrite operations)
+    files_to_delete: Vec<DataFile>,
+    /// Operation type for the snapshot summary
+    operation_type: &'static str,
+}
+
+/// Process transaction operations and collect statistics
+fn collect_operation_stats(transaction: &Transaction) -> Result<OperationStats> {
+    let mut files_to_add = Vec::new();
+    let mut files_to_delete = Vec::new();
+    let mut has_rewrite = false;
+
+    for op in transaction.operations() {
+        match op {
+            TransactionOperation::Append(files) => {
+                files_to_add.extend(files.clone());
+            }
+            TransactionOperation::Rewrite {
+                files_to_delete: delete,
+                files_to_add: add,
+            } => {
+                files_to_delete.extend(delete.clone());
+                files_to_add.extend(add.clone());
+                has_rewrite = true;
+            }
+        }
+    }
+
+    if files_to_add.is_empty() && files_to_delete.is_empty() {
+        return Err(Error::InvalidInput("No data files to commit".to_string()));
+    }
+
+    let operation_type = if has_rewrite { "replace" } else { "append" };
+
+    Ok(OperationStats {
+        files_to_add,
+        files_to_delete,
+        operation_type,
+    })
+}
+
 /// Try to commit once (no retries)
 pub async fn try_commit(
     transaction: &Transaction,
@@ -48,14 +96,14 @@ pub async fn try_commit(
     let file_io = table.file_io();
     let current_schema = metadata.current_schema()?;
 
+    // Collect operation statistics
+    let stats = collect_operation_stats(transaction)?;
+
     // Generate IDs
     let snapshot_id = generate_snapshot_id(table);
-    // Sequence number should be based on last_sequence_number from metadata
-    // For now, we'll compute it: if there are snapshots, max sequence + 1, otherwise 1
     let sequence_number = if metadata.snapshots().is_empty() {
-        1 // First snapshot gets sequence number 1
+        1
     } else {
-        // Find max sequence number from existing snapshots and add 1
         metadata
             .snapshots()
             .iter()
@@ -70,23 +118,32 @@ pub async fn try_commit(
     );
     let commit_uuid = Uuid::new_v4().to_string().replace('-', "");
 
-    // Extract data files from operations
-    let mut all_data_files = Vec::new();
-    for op in transaction.operations() {
-        let TransactionOperation::Append(files) = op;
-        all_data_files.extend(files.clone());
-    }
-
-    if all_data_files.is_empty() {
-        return Err(Error::InvalidInput("No data files to commit".to_string()));
-    }
-
-    // 1. Write manifest file
+    // 1. Write manifest file with entries
     let manifest_file_path = manifest_path(table.location(), &commit_uuid, 0);
-    let manifest_bytes = write_manifest(
+
+    // Create manifest entries with appropriate status
+    let mut manifest_entries_to_write: Vec<ManifestEntry> = Vec::new();
+
+    // Add deleted entries first (for rewrite operations)
+    for file in &stats.files_to_delete {
+        manifest_entries_to_write.push(ManifestEntry {
+            data_file: file.clone(),
+            status: ManifestEntryStatus::Deleted,
+        });
+    }
+
+    // Add new entries
+    for file in &stats.files_to_add {
+        manifest_entries_to_write.push(ManifestEntry {
+            data_file: file.clone(),
+            status: ManifestEntryStatus::Added,
+        });
+    }
+
+    let manifest_bytes = write_manifest_with_entries(
         file_io,
         &manifest_file_path,
-        &all_data_files,
+        &manifest_entries_to_write,
         snapshot_id,
         sequence_number,
     )
@@ -94,10 +151,16 @@ pub async fn try_commit(
 
     // 2. Build manifest list entries
     let manifest_list_file_path = manifest_list_path(table.location(), snapshot_id, &commit_uuid);
-    let added_files_count = all_data_files.len() as i32;
-    let added_rows_count: i64 = all_data_files.iter().map(|f| f.record_count()).sum();
+    let added_files_count = stats.files_to_add.len() as i32;
+    let added_rows_count: i64 = stats.files_to_add.iter().map(|f| f.record_count()).sum();
+    let deleted_files_count = stats.files_to_delete.len() as i32;
+    let deleted_rows_count: i64 = stats.files_to_delete.iter().map(|f| f.record_count()).sum();
 
-    let mut manifest_entries = Vec::new();
+    let mut manifest_list_entries = Vec::new();
+
+    // Track totals for summary
+    let mut total_existing_files: i64 = 0;
+    let mut total_existing_rows: i64 = 0;
 
     // 2a. Carry forward manifests from parent snapshot (if exists)
     if let Some(parent_snapshot) = table.current_snapshot() {
@@ -109,8 +172,14 @@ pub async fn try_commit(
             ManifestListReader::read_entries(file_io, parent_snapshot.manifest_list()).await?;
 
         for parent_info in parent_manifest_infos {
-            // Convert parent manifests to "existing" entries
-            // Move counts from "added" to "existing" since these files now exist from a previous snapshot
+            // Calculate how many files/rows are still valid (not deleted)
+            let parent_total_files =
+                parent_info.added_files_count + parent_info.existing_files_count;
+            let parent_total_rows =
+                parent_info.added_rows_count + parent_info.existing_rows_count;
+
+            // For now, we carry forward all parent manifests as existing
+            // The deleted files are tracked in our new manifest
             let existing_entry = ManifestListEntry {
                 manifest_path: parent_info.manifest_path,
                 manifest_length: parent_info.manifest_length,
@@ -119,20 +188,23 @@ pub async fn try_commit(
                 sequence_number: parent_info.sequence_number,
                 min_sequence_number: parent_info.min_sequence_number,
                 added_snapshot_id: parent_info.added_snapshot_id,
-                added_files_count: 0, // No new files from this old manifest
-                existing_files_count: parent_info.added_files_count
-                    + parent_info.existing_files_count, // All files are now existing
+                added_files_count: 0,
+                existing_files_count: parent_total_files,
                 deleted_files_count: parent_info.deleted_files_count,
-                added_rows_count: 0, // No new rows from this old manifest
-                existing_rows_count: parent_info.added_rows_count + parent_info.existing_rows_count, // All rows are now existing
+                added_rows_count: 0,
+                existing_rows_count: parent_total_rows,
                 deleted_rows_count: parent_info.deleted_rows_count,
             };
-            manifest_entries.push(existing_entry);
+
+            total_existing_files += parent_total_files as i64;
+            total_existing_rows += parent_total_rows;
+
+            manifest_list_entries.push(existing_entry);
         }
 
         debug!(
             "Carried forward {} manifests from parent snapshot",
-            manifest_entries.len()
+            manifest_list_entries.len()
         );
     }
 
@@ -140,9 +212,6 @@ pub async fn try_commit(
     let new_manifest_entry = ManifestListEntry {
         manifest_path: manifest_file_path.clone(),
         manifest_length: manifest_bytes,
-        // TODO: Support partitioned tables
-        // Currently hardcoded to 0 (unpartitioned). When partition support is added,
-        // this should use the actual partition spec ID from the table metadata.
         partition_spec_id: 0,
         content: 0, // 0 = DATA
         sequence_number,
@@ -150,31 +219,43 @@ pub async fn try_commit(
         added_snapshot_id: snapshot_id,
         added_files_count,
         existing_files_count: 0,
-        deleted_files_count: 0,
+        deleted_files_count,
         added_rows_count,
         existing_rows_count: 0,
-        deleted_rows_count: 0,
+        deleted_rows_count,
     };
-    manifest_entries.push(new_manifest_entry);
+    manifest_list_entries.push(new_manifest_entry);
 
     debug!(
         "Writing manifest list with {} entries total",
-        manifest_entries.len()
+        manifest_list_entries.len()
     );
 
     // 2c. Write manifest list
-    write_manifest_list(file_io, &manifest_list_file_path, manifest_entries).await?;
+    write_manifest_list(file_io, &manifest_list_file_path, manifest_list_entries).await?;
 
-    // 3. Create snapshot
-    let summary = Summary::builder()
-        .set("operation", "append")
+    // 3. Create snapshot summary
+    // Calculate totals: existing + added - deleted
+    let total_data_files = total_existing_files + added_files_count as i64 - deleted_files_count as i64;
+    let total_records = total_existing_rows + added_rows_count - deleted_rows_count;
+
+    let mut summary_builder = Summary::builder()
+        .set("operation", stats.operation_type)
         .set("added-data-files", &added_files_count.to_string())
         .set("added-records", &added_rows_count.to_string())
-        .set("total-data-files", &added_files_count.to_string())
-        .set("total-records", &added_rows_count.to_string())
-        .build();
+        .set("total-data-files", &total_data_files.to_string())
+        .set("total-records", &total_records.to_string());
 
-    // Handle parent snapshot ID: -1 means no parent (first snapshot)
+    // Add deleted file stats for rewrite operations
+    if deleted_files_count > 0 {
+        summary_builder = summary_builder
+            .set("deleted-data-files", &deleted_files_count.to_string())
+            .set("deleted-records", &deleted_rows_count.to_string());
+    }
+
+    let summary = summary_builder.build();
+
+    // Handle parent snapshot ID
     let current_snap_id = metadata.current_snapshot_id();
     debug!("Current snapshot ID from metadata: {:?}", current_snap_id);
     let schema_id = current_schema.schema_id();
@@ -182,7 +263,6 @@ pub async fn try_commit(
 
     let mut snapshot_builder = Snapshot::builder().with_snapshot_id(snapshot_id);
 
-    // Only set parent if there is a valid parent (not -1)
     if let Some(parent_id) = current_snap_id {
         if parent_id != -1 {
             debug!("Setting parent_snapshot_id: {}", parent_id);
@@ -209,7 +289,6 @@ pub async fn try_commit(
     // 4. Update metadata
     let new_metadata = metadata.add_snapshot(snapshot.clone(), timestamp_ms);
 
-    // Debug: Check the snapshot in new_metadata before serialization
     if let Some(last_snapshot) = new_metadata.snapshots().last() {
         debug!(
             "Snapshot in new_metadata before serialization - parent: {:?}, schema: {:?}",
@@ -223,7 +302,6 @@ pub async fn try_commit(
     let new_metadata_path = next_metadata_path(table.location(), old_metadata_path, &commit_uuid);
     let metadata_json = serde_json::to_vec_pretty(&new_metadata)?;
 
-    // Debug: Print a snippet of the serialized JSON to see if parent-snapshot-id is there
     if let Ok(json_str) = std::str::from_utf8(&metadata_json) {
         if let Some(snapshot_section) = json_str.rfind("\"snapshot-id\"") {
             let snippet = &json_str[snapshot_section.saturating_sub(200)
@@ -232,10 +310,7 @@ pub async fn try_commit(
         }
     }
 
-    // Write metadata file
     debug!("Writing metadata to: {}", new_metadata_path);
-    // Note: This will fail with 412 if file exists, which is fine for testing
-    // In production, we should handle the exists check properly
     file_io.write(&new_metadata_path, metadata_json).await?;
 
     // 6. Update catalog to point to new metadata

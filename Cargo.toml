@@ -12,6 +12,10 @@ readme = "README.md"
 keywords = ["iceberg", "parquet", "data", "s3", "wasm"]
 categories = ["database", "web-programming"]
 
+[[bin]]
+name = "icepick"
+path = "src/bin/icepick.rs"
+
 [dependencies]
 # HTTP and serialization
 http = "1.0"
@@ -38,7 +42,13 @@ aws-sigv4 = { version = "1.3.6", default-features = false, features = ["sign-htt
 aws-credential-types = { version = "1.2", default-features = false }
 aws-config = { version = "1.8", default-features = false, features = ["rustls", "behavior-version-latest", "rt-tokio"] }
 aws-sdk-sts = { version = "1.55", default-features = false, features = ["rustls", "rt-tokio"] }
-tokio = { version = "1.48.0", default-features = false, features = ["time"] }
+tokio = { version = "1.48.0", default-features = false, features = ["time", "rt-multi-thread", "macros"] }
+# CLI dependencies
+clap = { version = "4", features = ["derive", "env"] }
+comfy-table = "7"
+bytesize = "1"
+humantime = "2"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 
 # WASM targets
 [target.'cfg(target_family = "wasm")'.dependencies]

@@ -8,6 +8,33 @@ use crate::spec::DataFile;
 use apache_avro::types::Value;
 use apache_avro::Writer;
 
+/// Status of a manifest entry
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+pub enum ManifestEntryStatus {
+    /// File exists from a previous snapshot
+    Existing = 0,
+    /// File was added in this snapshot
+    Added = 1,
+    /// File was deleted in this snapshot
+    Deleted = 2,
+}
+
+impl From<ManifestEntryStatus> for i32 {
+    fn from(status: ManifestEntryStatus) -> Self {
+        status as i32
+    }
+}
+
+/// A data file with its manifest entry status
+#[derive(Debug, Clone)]
+pub struct ManifestEntry {
+    /// The data file
+    pub data_file: DataFile,
+    /// The status of this entry
+    pub status: ManifestEntryStatus,
+}
+
 /// Represents an entry in a manifest list
 #[derive(Debug, Clone)]
 pub struct ManifestListEntry {
@@ -49,16 +76,40 @@ pub async fn write_manifest(
     snapshot_id: i64,
     sequence_number: i64,
 ) -> Result<i64> {
+    // Convert to entries with Added status
+    let entries: Vec<ManifestEntry> = data_files
+        .iter()
+        .map(|df| ManifestEntry {
+            data_file: df.clone(),
+            status: ManifestEntryStatus::Added,
+        })
+        .collect();
+
+    write_manifest_with_entries(file_io, path, &entries, snapshot_id, sequence_number).await
+}
+
+/// Write a manifest file containing data file entries with explicit status
+///
+/// This function allows specifying the status for each entry (Existing, Added, or Deleted).
+/// Returns the number of bytes written.
+pub async fn write_manifest_with_entries(
+    file_io: &FileIO,
+    path: &str,
+    entries: &[ManifestEntry],
+    snapshot_id: i64,
+    sequence_number: i64,
+) -> Result<i64> {
     let schema = manifest_entry_schema_v2()
         .map_err(|e| crate::error::Error::InvalidInput(format!("Invalid Avro schema: {}", e)))?;
 
     let mut writer = Writer::new(&schema, Vec::new());
 
-    for data_file in data_files {
-        let data_file_value = data_file_to_avro(data_file)?;
+    for entry in entries {
+        let data_file_value = data_file_to_avro(&entry.data_file)?;
+        let status_value: i32 = entry.status.into();
 
-        let entry = Value::Record(vec![
-            ("status".to_string(), Value::Int(1)), // 1 = ADDED
+        let avro_entry = Value::Record(vec![
+            ("status".to_string(), Value::Int(status_value)),
             (
                 "snapshot_id".to_string(),
                 Value::Union(1, Box::new(Value::Long(snapshot_id))),
@@ -74,7 +125,7 @@ pub async fn write_manifest(
             ("data_file".to_string(), data_file_value),
         ]);
 
-        writer.append(entry).map_err(|e| {
+        writer.append(avro_entry).map_err(|e| {
             crate::error::Error::InvalidInput(format!("Failed to append to Avro writer: {}", e))
         })?;
     }

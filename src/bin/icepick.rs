@@ -15,25 +15,13 @@ struct Cli {
     #[command(subcommand)]
     command: Commands,
 
-    /// S3 Tables ARN
-    #[arg(long, env = "ICEPICK_ARN", global = true)]
-    arn: Option<String>,
+    /// Iceberg REST catalog URL (e.g., https://catalog.cloudflarestorage.com/account/bucket)
+    #[arg(long, env = "ICEPICK_CATALOG_URL", global = true)]
+    catalog_url: Option<String>,
 
-    /// R2 Account ID
-    #[arg(long, env = "ICEPICK_R2_ACCOUNT", global = true)]
-    r2_account: Option<String>,
-
-    /// R2 Bucket
-    #[arg(long, env = "ICEPICK_R2_BUCKET", global = true)]
-    r2_bucket: Option<String>,
-
-    /// API Token (R2/REST)
+    /// API Token for catalog authentication
     #[arg(long, env = "ICEPICK_TOKEN", global = true)]
     token: Option<String>,
-
-    /// REST catalog endpoint
-    #[arg(long, env = "ICEPICK_ENDPOINT", global = true)]
-    endpoint: Option<String>,
 
     /// Output format
     #[arg(long, short, default_value = "text", global = true)]
@@ -71,11 +59,8 @@ async fn main() {
     let cli = Cli::parse();
 
     let config = CatalogConfig {
-        arn: cli.arn,
-        r2_account: cli.r2_account,
-        r2_bucket: cli.r2_bucket,
+        catalog_url: cli.catalog_url,
         token: cli.token,
-        endpoint: cli.endpoint,
     };
 
     let result = match cli.command {

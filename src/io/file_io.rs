@@ -14,11 +14,33 @@ pub struct AwsCredentials {
     pub session_token: Option<String>,
 }
 
+/// Vended credentials returned by the catalog's /credentials endpoint
+#[derive(Debug, Clone)]
+pub struct VendedCredentials {
+    pub access_key_id: String,
+    pub secret_access_key: String,
+    pub session_token: Option<String>,
+    pub endpoint: Option<String>,
+    pub region: Option<String>,
+}
+
+/// Trait for providers that can fetch vended credentials from a catalog
+#[cfg_attr(not(target_family = "wasm"), async_trait::async_trait)]
+#[cfg_attr(target_family = "wasm", async_trait::async_trait(?Send))]
+pub trait VendedCredentialProvider: Send + Sync + std::fmt::Debug {
+    /// Fetch credentials for accessing the given path
+    async fn get_credentials(&self, path: &str) -> Result<VendedCredentials>;
+
+    /// Get the S3-compatible endpoint for this provider (if known)
+    fn s3_endpoint(&self) -> Option<&str>;
+}
+
 /// File I/O abstraction for reading/writing Iceberg files
 ///
-/// Supports two modes:
+/// Supports three modes:
 /// - Single operator mode (R2): Uses pre-configured default_operator
 /// - Multi-bucket mode (S3 Tables): Creates operators dynamically per bucket using credentials
+/// - Vended credentials mode: Fetches credentials from catalog for each table
 ///
 /// For S3 Tables, all buckets are in the same region, so we only cache by bucket name.
 #[derive(Clone)]
@@ -31,6 +53,10 @@ pub struct FileIO {
     operator_cache: Arc<RwLock<HashMap<String, Operator>>>,
     /// Pre-configured operator (R2 mode)
     default_operator: Option<Operator>,
+    /// Vended credential provider (REST catalog mode)
+    vended_credential_provider: Option<Arc<dyn VendedCredentialProvider>>,
+    /// Cached vended credentials (bucket -> credentials)
+    vended_credentials_cache: Arc<RwLock<HashMap<String, VendedCredentials>>>,
 }
 
 impl FileIO {
@@ -44,6 +70,8 @@ impl FileIO {
             default_region: String::new(),
             operator_cache: Arc::new(RwLock::new(HashMap::new())),
             default_operator: Some(operator),
+            vended_credential_provider: None,
+            vended_credentials_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -57,7 +85,54 @@ impl FileIO {
             default_region,
             operator_cache: Arc::new(RwLock::new(HashMap::new())),
             default_operator: None,
+            vended_credential_provider: None,
+            vended_credentials_cache: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Create a new FileIO with vended credentials from a catalog
+    ///
+    /// This creates a FileIO that fetches credentials on-demand from the catalog's
+    /// /credentials endpoint. The credentials are cached per bucket.
+    pub fn with_vended_credentials(provider: Arc<dyn VendedCredentialProvider>) -> Self {
+        Self {
+            credentials: None,
+            default_region: "auto".to_string(),
+            operator_cache: Arc::new(RwLock::new(HashMap::new())),
+            default_operator: None,
+            vended_credential_provider: Some(provider),
+            vended_credentials_cache: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// Create a FileIO with pre-fetched vended credentials
+    ///
+    /// Use this when you've already fetched credentials (e.g., from loading a table)
+    /// and want to create a FileIO for that specific table's files.
+    pub fn from_vended_credentials(creds: VendedCredentials, bucket: &str) -> Result<Self> {
+        let endpoint = creds.endpoint.clone().ok_or_else(|| {
+            Error::InvalidInput("Vended credentials missing endpoint".to_string())
+        })?;
+
+        let region = creds.region.clone().unwrap_or_else(|| "auto".to_string());
+
+        use opendal::services::S3;
+        let mut builder = S3::default()
+            .bucket(bucket)
+            .region(&region)
+            .endpoint(&endpoint)
+            .access_key_id(&creds.access_key_id)
+            .secret_access_key(&creds.secret_access_key);
+
+        if let Some(ref token) = creds.session_token {
+            builder = builder.session_token(token);
+        }
+
+        let operator = Operator::new(builder)
+            .map_err(|e| Error::IoError(format!("Failed to create S3 operator: {}", e)))?
+            .finish();
+
+        Ok(Self::new(operator))
     }
 
     /// Extract bucket name from S3 URI
@@ -85,7 +160,8 @@ impl FileIO {
     /// Priority:
     /// 1. If default_operator exists → use it (R2 case)
     /// 2. If credentials exist → create dynamic operator (S3 Tables case)
-    /// 3. Error - no operator configured
+    /// 3. If vended credential provider exists → fetch and cache credentials
+    /// 4. Error - no operator configured
     async fn get_operator_for_path(&self, path: &str) -> Result<Operator> {
         // Priority 1: Use default operator if available (R2 mode)
         if let Some(ref op) = self.default_operator {
@@ -98,7 +174,58 @@ impl FileIO {
             return self.get_or_create_operator(&bucket).await;
         }
 
-        // Priority 3: No operator configured
+        // Priority 3: Use vended credentials if provider available
+        if let Some(ref provider) = self.vended_credential_provider {
+            let (bucket, _) = self.extract_bucket_from_uri(path)?;
+
+            // Check cache first
+            {
+                let cache = self.operator_cache.read().map_err(|e| {
+                    Error::IoError(format!("Failed to acquire read lock: {}", e))
+                })?;
+                if let Some(op) = cache.get(&bucket) {
+                    return Ok(op.clone());
+                }
+            }
+
+            // Fetch credentials from provider
+            let creds = provider.get_credentials(path).await?;
+
+            // Build operator with vended credentials
+            let endpoint = creds.endpoint.clone().or_else(|| {
+                provider.s3_endpoint().map(|s| s.to_string())
+            }).ok_or_else(|| {
+                Error::InvalidInput("No S3 endpoint available for vended credentials".to_string())
+            })?;
+
+            let region = creds.region.clone().unwrap_or_else(|| "auto".to_string());
+
+            use opendal::services::S3;
+            let mut builder = S3::default()
+                .bucket(&bucket)
+                .region(&region)
+                .endpoint(&endpoint)
+                .access_key_id(&creds.access_key_id)
+                .secret_access_key(&creds.secret_access_key);
+
+            if let Some(ref token) = creds.session_token {
+                builder = builder.session_token(token);
+            }
+
+            let operator = Operator::new(builder)
+                .map_err(|e| Error::IoError(format!("Failed to create S3 operator: {}", e)))?
+                .finish();
+
+            // Cache the operator
+            let mut cache = self.operator_cache.write().map_err(|e| {
+                Error::IoError(format!("Failed to acquire write lock: {}", e))
+            })?;
+            cache.insert(bucket, operator.clone());
+
+            return Ok(operator);
+        }
+
+        // Priority 4: No operator configured
         Err(Error::InvalidInput(
             "FileIO not configured with operator or credentials".to_string(),
         ))

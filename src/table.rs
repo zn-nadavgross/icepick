@@ -13,7 +13,6 @@ pub struct Table {
     identifier: TableIdent,
     metadata: TableMetadata,
     metadata_location: String,
-    #[allow(dead_code)]
     file_io: FileIO,
 }
 

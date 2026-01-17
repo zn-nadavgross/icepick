@@ -2,7 +2,8 @@
 
 use crate::cli::catalog::CatalogConfig;
 use crate::cli::output::{format_bytes, format_number, print, OutputFormat, Outputable};
-use crate::spec::{NamespaceIdent, TableIdent};
+use crate::cli::util::parse_table_ident;
+use crate::spec::NamespaceIdent;
 use clap::Subcommand;
 use comfy_table::{Row, Table as ComfyTable};
 use serde::Serialize;
@@ -181,19 +182,6 @@ impl Outputable for TableFiles {
 
         lines.join("\n")
     }
-}
-
-/// Parse a table identifier (namespace.table)
-fn parse_table_ident(s: &str) -> Result<TableIdent, String> {
-    let parts: Vec<&str> = s.splitn(2, '.').collect();
-    if parts.len() != 2 {
-        return Err(format!(
-            "Invalid table identifier '{}'. Expected format: namespace.table",
-            s
-        ));
-    }
-    let namespace = NamespaceIdent::new(vec![parts[0].to_string()]);
-    Ok(TableIdent::new(namespace, parts[1].to_string()))
 }
 
 /// Execute a table command

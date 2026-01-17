@@ -61,7 +61,6 @@ impl Transaction {
     }
 
     /// Get the operations (for internal use)
-    #[allow(dead_code)]
     pub(crate) fn operations(&self) -> &[TransactionOperation] {
         &self.operations
     }

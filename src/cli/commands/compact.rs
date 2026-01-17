@@ -2,8 +2,8 @@
 
 use crate::cli::catalog::CatalogConfig;
 use crate::cli::output::{format_bytes, format_number, format_percentage, print, OutputFormat, Outputable};
+use crate::cli::util::parse_table_ident;
 use crate::compact::{execute_compaction, plan_compaction, CompactOptions, CompactionPlan};
-use crate::spec::{NamespaceIdent, TableIdent};
 use clap::Args;
 use serde::Serialize;
 
@@ -136,10 +136,14 @@ impl Outputable for CompactionResultOutput {
             lines.push(format!("  Failed:     {}", self.partitions_failed));
         }
 
-        let file_reduction = format_percentage(
-            (self.files_removed - self.files_added) as u64,
-            self.files_removed as u64,
-        );
+        let file_reduction = if self.files_removed > self.files_added {
+            format_percentage(
+                (self.files_removed - self.files_added) as u64,
+                self.files_removed as u64,
+            )
+        } else {
+            "0%".to_string()
+        };
         lines.push(format!(
             "  Files:      {} -> {} ({} reduction)",
             self.files_removed, self.files_added, file_reduction
@@ -169,19 +173,6 @@ impl Outputable for CompactionResultOutput {
 
         lines.join("\n")
     }
-}
-
-/// Parse a table identifier (namespace.table)
-fn parse_table_ident(s: &str) -> Result<TableIdent, String> {
-    let parts: Vec<&str> = s.splitn(2, '.').collect();
-    if parts.len() != 2 {
-        return Err(format!(
-            "Invalid table identifier '{}'. Expected format: namespace.table",
-            s
-        ));
-    }
-    let namespace = NamespaceIdent::new(vec![parts[0].to_string()]);
-    Ok(TableIdent::new(namespace, parts[1].to_string()))
 }
 
 /// Execute the compact command

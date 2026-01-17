@@ -5,6 +5,8 @@
 pub mod catalog;
 pub mod commands;
 pub mod output;
+pub mod util;
 
 pub use catalog::CatalogConfig;
 pub use output::OutputFormat;
+pub use util::parse_table_ident;

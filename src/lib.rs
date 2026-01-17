@@ -54,6 +54,7 @@ pub mod cli;
 pub mod commit;
 pub mod compact;
 pub mod error;
+pub mod expr;
 pub mod io;
 pub mod manifest;
 pub mod reader;
@@ -96,3 +97,6 @@ pub use compact::{
     compact_table, execute_compaction, plan_compaction, CompactOptions, CompactionGroup,
     CompactionPlan, CompactionResult, PartitionError, PartitionPlan,
 };
+
+// Re-export expression types
+pub use expr::{parse_filter, ColumnRef, ComparisonOp, Datum, Predicate};

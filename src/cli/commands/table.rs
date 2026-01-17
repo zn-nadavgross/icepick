@@ -3,6 +3,7 @@
 use crate::cli::catalog::CatalogConfig;
 use crate::cli::output::{format_bytes, format_number, print, OutputFormat, Outputable};
 use crate::cli::util::parse_table_ident;
+use crate::expr::parse_filter;
 use crate::spec::NamespaceIdent;
 use clap::Subcommand;
 use comfy_table::{Row, Table as ComfyTable};
@@ -32,6 +33,16 @@ pub enum TableCommand {
         /// Filter by partition value
         #[arg(long, short)]
         partition: Option<String>,
+    },
+
+    /// Scan table with optional filter (show file pruning stats)
+    Scan {
+        /// Table identifier (namespace.table)
+        table: String,
+
+        /// Filter expression (e.g., "date >= '2024-01-01' AND status = 'active'")
+        #[arg(long, short)]
+        filter: Option<String>,
     },
 }
 
@@ -184,6 +195,37 @@ impl Outputable for TableFiles {
     }
 }
 
+/// Scan result output
+#[derive(Debug, Serialize)]
+pub struct ScanResult {
+    pub table: String,
+    pub filter: Option<String>,
+    pub total_files: usize,
+    pub files_after_filter: usize,
+    pub files_pruned: usize,
+    pub pruning_percentage: f64,
+}
+
+impl Outputable for ScanResult {
+    fn to_text(&self) -> String {
+        let mut lines = vec![format!("Scan plan for '{}':", self.table)];
+
+        if let Some(ref filter) = self.filter {
+            lines.push(format!("Filter: {}", filter));
+        } else {
+            lines.push("Filter: (none)".to_string());
+        }
+
+        lines.push(String::new());
+        lines.push(format!("Total files:        {}", format_number(self.total_files as u64)));
+        lines.push(format!("Files after filter: {}", format_number(self.files_after_filter as u64)));
+        lines.push(format!("Files pruned:       {}", format_number(self.files_pruned as u64)));
+        lines.push(format!("Pruning:            {:.1}%", self.pruning_percentage));
+
+        lines.join("\n")
+    }
+}
+
 /// Execute a table command
 pub async fn execute(
     command: TableCommand,
@@ -303,6 +345,53 @@ pub async fn execute(
                 total_size_bytes: total_size,
                 total_records,
                 files: file_infos,
+            };
+
+            print(&result, format);
+            Ok(())
+        }
+
+        TableCommand::Scan { table: table_str, filter } => {
+            let table_ident = parse_table_ident(&table_str)?;
+            let table = catalog
+                .load_table(&table_ident)
+                .await
+                .map_err(|e| format!("Failed to load table: {}", e))?;
+
+            // Parse the filter expression if provided
+            let predicate = if let Some(ref filter_str) = filter {
+                Some(parse_filter(filter_str).map_err(|e| format!("Failed to parse filter: {}", e))?)
+            } else {
+                None
+            };
+
+            // Build scan with optional filter
+            let mut scan_builder = table.scan();
+            if let Some(pred) = predicate {
+                scan_builder = scan_builder.filter(pred);
+            }
+            let scan = scan_builder.build().map_err(|e| format!("Failed to build scan: {}", e))?;
+
+            // Get file counts
+            let (files_after_filter, total_files) = scan
+                .file_count()
+                .await
+                .map_err(|e| format!("Failed to get file count: {}", e))?;
+
+            let files_pruned = total_files.saturating_sub(files_after_filter);
+            let pruning_percentage = if total_files > 0 {
+                (files_pruned as f64 / total_files as f64) * 100.0
+            } else {
+                0.0
+            };
+
+            let result = ScanResult {
+                table: table_str,
+                filter,
+                total_files,
+                files_after_filter,
+                files_pruned,
+                pruning_percentage,
             };
 
             print(&result, format);

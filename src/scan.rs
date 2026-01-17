@@ -1,6 +1,7 @@
 //! Table scanning and reading
 
 use crate::error::{Error, Result};
+use crate::expr::{evaluate_bounds, evaluate_partition, project_to_partition, Predicate};
 use crate::reader::DataFileEntry;
 use crate::table::Table;
 use arrow::record_batch::RecordBatch;
@@ -20,35 +21,113 @@ pub type ArrowRecordBatchStream = Pin<Box<dyn futures::Stream<Item = Result<Reco
 /// Builder for creating table scans
 pub struct TableScanBuilder<'a> {
     table: &'a Table,
+    predicate: Option<Predicate>,
 }
 
 impl<'a> TableScanBuilder<'a> {
     pub(crate) fn new(table: &'a Table) -> Self {
-        Self { table }
+        Self {
+            table,
+            predicate: None,
+        }
+    }
+
+    /// Add a filter predicate to the scan
+    ///
+    /// The predicate will be used for partition pruning and column statistics
+    /// filtering to skip files that cannot contain matching rows.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use icepick::expr::{Predicate, Datum};
+    ///
+    /// let scan = table.scan()
+    ///     .filter(Predicate::gt_eq("date", Datum::Date(19724)))
+    ///     .build()?;
+    /// ```
+    pub fn filter(mut self, predicate: Predicate) -> Self {
+        self.predicate = Some(predicate);
+        self
     }
 
     /// Build the table scan
     pub fn build(self) -> Result<TableScan<'a>> {
-        Ok(TableScan { table: self.table })
+        Ok(TableScan {
+            table: self.table,
+            predicate: self.predicate,
+        })
     }
 }
 
 /// A table scan for reading data
 pub struct TableScan<'a> {
     table: &'a Table,
+    predicate: Option<Predicate>,
 }
 
 impl<'a> TableScan<'a> {
     /// Convert the scan into an Arrow RecordBatch stream
     ///
-    /// This reads all data files sequentially and streams RecordBatches.
-    /// No filtering or projection is applied in this MVP version.
+    /// When a predicate is set, files are filtered using:
+    /// 1. Partition pruning - skip files whose partition values don't match
+    /// 2. Bounds pruning - skip files whose min/max statistics prove no match
+    ///
+    /// Files that pass filtering are read sequentially and streamed as RecordBatches.
     pub async fn to_arrow(&self) -> Result<ArrowRecordBatchStream> {
-        // Get all data files
-        let files = self.table.files().await?;
-
         // Clone what we need for the async closure
         let file_io = self.table.file_io().clone();
+
+        let files: Vec<DataFileEntry> = if let Some(ref predicate) = self.predicate {
+            // Get files with statistics for filtering
+            let files_with_stats = self.table.files_with_stats().await?;
+            let schema = self.table.schema()?;
+            let partition_fields = self.table.partition_fields();
+
+            // Project predicate to partition columns
+            let partition_predicate = if let Some(spec) = self.table.current_partition_spec() {
+                project_to_partition(predicate, schema, spec)
+            } else {
+                Predicate::AlwaysTrue
+            };
+
+            // Filter files
+            files_with_stats
+                .into_iter()
+                .filter(|file| {
+                    // Partition pruning
+                    let partition_match = evaluate_partition(
+                        &partition_predicate,
+                        &file.partition,
+                        partition_fields,
+                        schema,
+                    );
+
+                    if !partition_match {
+                        return false;
+                    }
+
+                    // Bounds pruning
+                    evaluate_bounds(
+                        predicate,
+                        schema,
+                        &file.lower_bounds,
+                        &file.upper_bounds,
+                        &file.null_value_counts,
+                        file.record_count,
+                    )
+                })
+                .map(|f| DataFileEntry {
+                    file_path: f.file_path,
+                    record_count: f.record_count,
+                    file_size_in_bytes: f.file_size_in_bytes,
+                    file_format: f.file_format,
+                })
+                .collect()
+        } else {
+            // No predicate - get all files
+            self.table.files().await?
+        };
 
         let state = ScanState {
             files: files.into_iter(),
@@ -86,6 +165,55 @@ impl<'a> TableScan<'a> {
         });
 
         Ok(Box::pin(stream))
+    }
+
+    /// Get the number of files that would be scanned
+    ///
+    /// This is useful for understanding the effect of predicate pushdown.
+    /// Returns (files_after_filtering, total_files).
+    pub async fn file_count(&self) -> Result<(usize, usize)> {
+        let total_files = self.table.files().await?.len();
+
+        let filtered_files = if let Some(ref predicate) = self.predicate {
+            let files_with_stats = self.table.files_with_stats().await?;
+            let schema = self.table.schema()?;
+            let partition_fields = self.table.partition_fields();
+
+            let partition_predicate = if let Some(spec) = self.table.current_partition_spec() {
+                project_to_partition(predicate, schema, spec)
+            } else {
+                Predicate::AlwaysTrue
+            };
+
+            files_with_stats
+                .into_iter()
+                .filter(|file| {
+                    let partition_match = evaluate_partition(
+                        &partition_predicate,
+                        &file.partition,
+                        partition_fields,
+                        schema,
+                    );
+
+                    if !partition_match {
+                        return false;
+                    }
+
+                    evaluate_bounds(
+                        predicate,
+                        schema,
+                        &file.lower_bounds,
+                        &file.upper_bounds,
+                        &file.null_value_counts,
+                        file.record_count,
+                    )
+                })
+                .count()
+        } else {
+            total_files
+        };
+
+        Ok((filtered_files, total_files))
     }
 }
 

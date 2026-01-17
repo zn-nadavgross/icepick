@@ -4,6 +4,7 @@ use crate::error::{Error, Result};
 use crate::io::FileIO;
 use apache_avro::types::Value;
 use apache_avro::Reader as AvroReader;
+use std::collections::HashMap;
 
 /// Information about a data file discovered from manifests
 #[derive(Debug, Clone)]
@@ -16,6 +17,29 @@ pub struct DataFileEntry {
     pub file_size_in_bytes: i64,
     /// File format (e.g., "PARQUET")
     pub file_format: String,
+}
+
+/// Enhanced data file entry with partition and statistics info for pruning
+#[derive(Debug, Clone)]
+pub struct DataFileStats {
+    /// Path to the data file
+    pub file_path: String,
+    /// Number of records in the file
+    pub record_count: i64,
+    /// Size of the file in bytes
+    pub file_size_in_bytes: i64,
+    /// File format (e.g., "PARQUET")
+    pub file_format: String,
+    /// Partition values (field_id -> raw bytes)
+    pub partition: HashMap<i32, Vec<u8>>,
+    /// Lower bounds per column (field_id -> raw bytes)
+    pub lower_bounds: HashMap<i32, Vec<u8>>,
+    /// Upper bounds per column (field_id -> raw bytes)
+    pub upper_bounds: HashMap<i32, Vec<u8>>,
+    /// Null value counts per column (field_id -> count)
+    pub null_value_counts: HashMap<i32, i64>,
+    /// Value counts per column (field_id -> count, non-null values)
+    pub value_counts: HashMap<i32, i64>,
 }
 
 /// Information about a manifest file entry in a manifest list
@@ -303,5 +327,275 @@ impl ManifestReader {
         }
 
         Ok(data_files)
+    }
+
+    /// Read a manifest and return data file entries with full statistics for pruning
+    pub async fn read_with_stats(
+        file_io: &FileIO,
+        manifest_path: &str,
+    ) -> Result<Vec<DataFileStats>> {
+        let bytes = file_io.read(manifest_path).await?;
+
+        let reader = AvroReader::new(&bytes[..])
+            .map_err(|e| Error::invalid_input(format!("Failed to read manifest: {}", e)))?;
+
+        let mut data_files = Vec::new();
+
+        for value in reader {
+            let value = value.map_err(|e| {
+                Error::invalid_input(format!("Failed to parse manifest entry: {}", e))
+            })?;
+
+            // Parse the manifest entry
+            if let Value::Record(fields) = value {
+                let mut status: Option<i32> = None;
+                let mut data_file_value: Option<Value> = None;
+
+                for (name, field_value) in fields {
+                    match name.as_str() {
+                        "status" => {
+                            if let Value::Int(s) = field_value {
+                                status = Some(s);
+                            }
+                        }
+                        "data_file" => {
+                            data_file_value = Some(field_value);
+                        }
+                        _ => {}
+                    }
+                }
+
+                // Skip deleted entries (status = 2)
+                if let Some(s) = status {
+                    if s == 2 {
+                        continue;
+                    }
+                }
+
+                // Parse data_file record with all stats
+                if let Some(Value::Record(data_file_fields)) = data_file_value {
+                    if let Some(stats) = parse_data_file_stats(data_file_fields) {
+                        data_files.push(stats);
+                    }
+                }
+            }
+        }
+
+        Ok(data_files)
+    }
+}
+
+/// Parse a data_file record into DataFileStats
+fn parse_data_file_stats(fields: Vec<(String, Value)>) -> Option<DataFileStats> {
+    let mut file_path: Option<String> = None;
+    let mut file_format: Option<String> = None;
+    let mut record_count: Option<i64> = None;
+    let mut file_size: Option<i64> = None;
+    let mut partition = HashMap::new();
+    let mut lower_bounds = HashMap::new();
+    let mut upper_bounds = HashMap::new();
+    let mut null_value_counts = HashMap::new();
+    let mut value_counts = HashMap::new();
+
+    for (name, field_value) in fields {
+        match name.as_str() {
+            "file_path" => {
+                if let Value::String(s) = field_value {
+                    file_path = Some(s);
+                }
+            }
+            "file_format" => {
+                if let Value::String(s) = field_value {
+                    file_format = Some(s);
+                }
+            }
+            "record_count" => {
+                if let Value::Long(n) = field_value {
+                    record_count = Some(n);
+                }
+            }
+            "file_size_in_bytes" => {
+                if let Value::Long(n) = field_value {
+                    file_size = Some(n);
+                }
+            }
+            "partition" => {
+                partition = extract_partition_values(&field_value);
+            }
+            "lower_bounds" => {
+                lower_bounds = extract_bounds_map(&field_value);
+            }
+            "upper_bounds" => {
+                upper_bounds = extract_bounds_map(&field_value);
+            }
+            "null_value_counts" => {
+                null_value_counts = extract_count_map(&field_value);
+            }
+            "value_counts" => {
+                value_counts = extract_count_map(&field_value);
+            }
+            _ => {}
+        }
+    }
+
+    Some(DataFileStats {
+        file_path: file_path?,
+        file_format: file_format?,
+        record_count: record_count?,
+        file_size_in_bytes: file_size?,
+        partition,
+        lower_bounds,
+        upper_bounds,
+        null_value_counts,
+        value_counts,
+    })
+}
+
+/// Extract partition values from the partition field
+/// Partition is a struct where each field corresponds to a partition field ID
+fn extract_partition_values(value: &Value) -> HashMap<i32, Vec<u8>> {
+    let mut result = HashMap::new();
+
+    // Handle union wrapper
+    let inner = match value {
+        Value::Union(_, boxed) => boxed.as_ref(),
+        other => other,
+    };
+
+    if let Value::Record(fields) = inner {
+        for (field_name, field_value) in fields {
+            // Field names in partition struct are the partition field IDs
+            if let Ok(field_id) = field_name.parse::<i32>() {
+                if let Some(bytes) = value_to_bytes(field_value) {
+                    result.insert(field_id, bytes);
+                }
+            }
+        }
+    }
+
+    result
+}
+
+/// Extract bounds map (field_id -> bytes)
+/// Bounds are stored as Avro map<int, bytes>
+fn extract_bounds_map(value: &Value) -> HashMap<i32, Vec<u8>> {
+    let mut result = HashMap::new();
+
+    // Handle union wrapper
+    let inner = match value {
+        Value::Union(_, boxed) => boxed.as_ref(),
+        other => other,
+    };
+
+    // Iceberg stores bounds as array of {key, value} records (Avro map)
+    if let Value::Map(map) = inner {
+        for (key, val) in map {
+            if let Ok(field_id) = key.parse::<i32>() {
+                if let Value::Bytes(bytes) = val {
+                    result.insert(field_id, bytes.clone());
+                }
+            }
+        }
+    } else if let Value::Array(items) = inner {
+        // Some Avro implementations use array of key-value pairs
+        for item in items {
+            if let Value::Record(fields) = item {
+                let mut key: Option<i32> = None;
+                let mut val: Option<Vec<u8>> = None;
+
+                for (name, field_val) in fields {
+                    match name.as_str() {
+                        "key" => {
+                            if let Value::Int(k) = field_val {
+                                key = Some(*k);
+                            }
+                        }
+                        "value" => {
+                            if let Value::Bytes(v) = field_val {
+                                val = Some(v.clone());
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                if let (Some(k), Some(v)) = (key, val) {
+                    result.insert(k, v);
+                }
+            }
+        }
+    }
+
+    result
+}
+
+/// Extract count map (field_id -> count)
+fn extract_count_map(value: &Value) -> HashMap<i32, i64> {
+    let mut result = HashMap::new();
+
+    // Handle union wrapper
+    let inner = match value {
+        Value::Union(_, boxed) => boxed.as_ref(),
+        other => other,
+    };
+
+    if let Value::Map(map) = inner {
+        for (key, val) in map {
+            if let Ok(field_id) = key.parse::<i32>() {
+                if let Some(count) = extract_long(val) {
+                    result.insert(field_id, count);
+                }
+            }
+        }
+    } else if let Value::Array(items) = inner {
+        for item in items {
+            if let Value::Record(fields) = item {
+                let mut key: Option<i32> = None;
+                let mut val: Option<i64> = None;
+
+                for (name, field_val) in fields {
+                    match name.as_str() {
+                        "key" => {
+                            if let Value::Int(k) = field_val {
+                                key = Some(*k);
+                            }
+                        }
+                        "value" => {
+                            val = extract_long(field_val);
+                        }
+                        _ => {}
+                    }
+                }
+
+                if let (Some(k), Some(v)) = (key, val) {
+                    result.insert(k, v);
+                }
+            }
+        }
+    }
+
+    result
+}
+
+/// Convert an Avro value to bytes for storage
+fn value_to_bytes(value: &Value) -> Option<Vec<u8>> {
+    // Handle union wrapper
+    let inner = match value {
+        Value::Union(_, boxed) => boxed.as_ref(),
+        Value::Null => return None,
+        other => other,
+    };
+
+    match inner {
+        Value::Null => None,
+        Value::Boolean(b) => Some(vec![if *b { 1 } else { 0 }]),
+        Value::Int(n) => Some(n.to_le_bytes().to_vec()),
+        Value::Long(n) => Some(n.to_le_bytes().to_vec()),
+        Value::Float(n) => Some(n.to_le_bytes().to_vec()),
+        Value::Double(n) => Some(n.to_le_bytes().to_vec()),
+        Value::Bytes(b) => Some(b.clone()),
+        Value::String(s) => Some(s.as_bytes().to_vec()),
+        Value::Fixed(_, b) => Some(b.clone()),
+        _ => None,
     }
 }

@@ -1,7 +1,9 @@
 //! Compact command
 
 use crate::cli::catalog::CatalogConfig;
-use crate::cli::output::{format_bytes, format_number, format_percentage, print, OutputFormat, Outputable};
+use crate::cli::output::{
+    format_bytes, format_number, format_percentage, print, OutputFormat, Outputable,
+};
 use crate::cli::util::parse_table_ident;
 use crate::compact::{execute_compaction, plan_compaction, CompactOptions, CompactionPlan};
 use clap::Args;
@@ -56,10 +58,7 @@ pub struct PartitionPlanOutput {
 
 impl Outputable for CompactionPlanOutput {
     fn to_text(&self) -> String {
-        let mut lines = vec![
-            format!("Compaction Plan for {}", self.table),
-            String::new(),
-        ];
+        let mut lines = vec![format!("Compaction Plan for {}", self.table), String::new()];
 
         for part in &self.partitions {
             let partition_name = part
@@ -83,7 +82,8 @@ impl Outputable for CompactionPlanOutput {
         }
 
         let reduction = if self.total_input_files > 0 {
-            let reduction_pct = 100.0 - (self.estimated_output_files as f64 / self.total_input_files as f64 * 100.0);
+            let reduction_pct = 100.0
+                - (self.estimated_output_files as f64 / self.total_input_files as f64 * 100.0);
             format!("{:.0}% reduction", reduction_pct)
         } else {
             "0% reduction".to_string()
@@ -125,10 +125,7 @@ pub struct CompactionResultOutput {
 
 impl Outputable for CompactionResultOutput {
     fn to_text(&self) -> String {
-        let mut lines = vec![
-            format!("Compacted {}", self.table),
-            String::new(),
-        ];
+        let mut lines = vec![format!("Compacted {}", self.table), String::new()];
 
         lines.push("Complete".to_string());
         lines.push(format!("  Partitions: {}", self.partitions_compacted));
@@ -161,7 +158,10 @@ impl Outputable for CompactionResultOutput {
             bytes_savings
         ));
 
-        lines.push(format!("  Records:    {}", format_number(self.records_processed)));
+        lines.push(format!(
+            "  Records:    {}",
+            format_number(self.records_processed)
+        ));
 
         if !self.errors.is_empty() {
             lines.push(String::new());
@@ -233,16 +233,28 @@ pub async fn execute(
         bytes_before: result.bytes_before,
         bytes_after: result.bytes_after,
         records_processed: result.records_processed,
-        errors: result.errors.iter().map(|e| {
-            format!("{}: {}", e.partition.as_deref().unwrap_or("(unpartitioned)"), e.error)
-        }).collect(),
+        errors: result
+            .errors
+            .iter()
+            .map(|e| {
+                format!(
+                    "{}: {}",
+                    e.partition.as_deref().unwrap_or("(unpartitioned)"),
+                    e.error
+                )
+            })
+            .collect(),
     };
 
     print(&output, format);
     Ok(())
 }
 
-fn build_plan_output(table: &str, plan: &CompactionPlan, options: &CompactOptions) -> CompactionPlanOutput {
+fn build_plan_output(
+    table: &str,
+    plan: &CompactionPlan,
+    options: &CompactOptions,
+) -> CompactionPlanOutput {
     let partitions: Vec<PartitionPlanOutput> = plan
         .partitions
         .iter()

@@ -2,8 +2,7 @@
 
 use clap::{Parser, Subcommand};
 use icepick::cli::commands::{
-    catalog as catalog_cmd, compact as compact_cmd, namespace as namespace_cmd,
-    table as table_cmd,
+    catalog as catalog_cmd, compact as compact_cmd, namespace as namespace_cmd, table as table_cmd,
 };
 use icepick::cli::{CatalogConfig, OutputFormat};
 

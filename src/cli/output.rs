@@ -26,7 +26,8 @@ pub fn print<T: Outputable>(item: &T, format: OutputFormat) {
         OutputFormat::Json => {
             println!(
                 "{}",
-                serde_json::to_string_pretty(item).unwrap_or_else(|e| format!("{{\"error\": \"{}\"}}", e))
+                serde_json::to_string_pretty(item)
+                    .unwrap_or_else(|e| format!("{{\"error\": \"{}\"}}", e))
             );
         }
     }

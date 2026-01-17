@@ -171,9 +171,8 @@ async fn compact_group(
     let schema = all_batches[0].schema();
 
     // Concatenate all batches
-    let combined_batch = concat_batches(&schema, &all_batches).map_err(|e| {
-        Error::invalid_input(format!("Failed to concatenate batches: {}", e))
-    })?;
+    let combined_batch = concat_batches(&schema, &all_batches)
+        .map_err(|e| Error::invalid_input(format!("Failed to concatenate batches: {}", e)))?;
 
     let total_records = combined_batch.num_rows() as u64;
 
@@ -198,7 +197,12 @@ async fn compact_group(
     let new_file = write_compacted_parquet(file_io, &output_path, combined_batch).await?;
     let bytes_after = new_file.file_size_in_bytes() as u64;
 
-    Ok((vec![new_file], group.input_bytes, bytes_after, total_records))
+    Ok((
+        vec![new_file],
+        group.input_bytes,
+        bytes_after,
+        total_records,
+    ))
 }
 
 /// Read all record batches from a Parquet file
@@ -206,11 +210,17 @@ async fn read_parquet_file(file_io: &FileIO, path: &str) -> Result<Vec<RecordBat
     let bytes: Bytes = file_io.read(path).await?.into();
 
     let builder = ParquetRecordBatchReaderBuilder::try_new(bytes).map_err(|e| {
-        Error::invalid_input(format!("Failed to create Parquet reader for {}: {}", path, e))
+        Error::invalid_input(format!(
+            "Failed to create Parquet reader for {}: {}",
+            path, e
+        ))
     })?;
 
     let reader = builder.build().map_err(|e| {
-        Error::invalid_input(format!("Failed to build Parquet reader for {}: {}", path, e))
+        Error::invalid_input(format!(
+            "Failed to build Parquet reader for {}: {}",
+            path, e
+        ))
     })?;
 
     let mut batches = Vec::new();
@@ -236,21 +246,20 @@ async fn write_compacted_parquet(
     let buffer = Vec::new();
     let props = WriterProperties::builder().build();
 
-    let mut writer = ArrowWriter::try_new(buffer, schema, Some(props)).map_err(|e| {
-        Error::invalid_input(format!("Failed to create Parquet writer: {}", e))
-    })?;
+    let mut writer = ArrowWriter::try_new(buffer, schema, Some(props))
+        .map_err(|e| Error::invalid_input(format!("Failed to create Parquet writer: {}", e)))?;
 
-    writer.write(&batch).map_err(|e| {
-        Error::invalid_input(format!("Failed to write batch: {}", e))
-    })?;
+    writer
+        .write(&batch)
+        .map_err(|e| Error::invalid_input(format!("Failed to write batch: {}", e)))?;
 
-    writer.flush().map_err(|e| {
-        Error::invalid_input(format!("Failed to flush writer: {}", e))
-    })?;
+    writer
+        .flush()
+        .map_err(|e| Error::invalid_input(format!("Failed to flush writer: {}", e)))?;
 
-    let parquet_bytes = writer.into_inner().map_err(|e| {
-        Error::invalid_input(format!("Failed to get buffer: {}", e))
-    })?;
+    let parquet_bytes = writer
+        .into_inner()
+        .map_err(|e| Error::invalid_input(format!("Failed to get buffer: {}", e)))?;
 
     let file_size = parquet_bytes.len() as i64;
 

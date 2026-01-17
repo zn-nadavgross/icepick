@@ -113,7 +113,8 @@ impl CompactionPlan {
             files.sort_by_key(|f| f.file_size_in_bytes());
 
             // Greedy bin-packing (first-fit decreasing)
-            let groups = bin_pack_files(files, options.target_file_size, options.min_files_per_group);
+            let groups =
+                bin_pack_files(files, options.target_file_size, options.min_files_per_group);
 
             if groups.is_empty() {
                 continue;

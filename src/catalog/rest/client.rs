@@ -77,7 +77,7 @@ impl IcebergRestCatalog {
         Self::from_r2_config_with_options(name, config, options).await
     }
 
-    pub async fn from_r2_config_with_options(
+    pub(crate) async fn from_r2_config_with_options(
         name: String,
         config: R2Config,
         options: CatalogOptions,
@@ -177,7 +177,7 @@ impl IcebergRestCatalog {
     /// This is useful when you need to provide explicit credentials or custom FileIO configuration.
     /// Unlike `from_r2_config_with_options`, this method doesn't create the FileIO automatically,
     /// allowing the caller to provide a FileIO with explicit credentials.
-    pub async fn from_r2_with_file_io(
+    pub(crate) async fn from_r2_with_file_io(
         name: String,
         config: R2Config,
         file_io: FileIO,
@@ -309,9 +309,7 @@ impl IcebergRestCatalog {
 
         // Derive warehouse from URL if not provided
         // URL format: https://catalog.example.com/account/bucket -> account_bucket
-        let warehouse = warehouse.unwrap_or_else(|| {
-            derive_warehouse_from_url(&endpoint)
-        });
+        let warehouse = warehouse.unwrap_or_else(|| derive_warehouse_from_url(&endpoint));
 
         let auth = Box::new(crate::catalog::BearerTokenAuthProvider::new(token.clone()));
         let http_client = build_http_client(options.http())?;
@@ -597,22 +595,19 @@ impl VendedCredentialProvider for RestCredentialProvider {
 
         let auth = crate::catalog::BearerTokenAuthProvider::new(self.token.clone());
 
-        let req = self
-            .http_client
-            .get(&url)
-            .build()
-            .map_err(|e| crate::error::Error::IoError(format!("Failed to build request: {}", e)))?;
+        let req =
+            self.http_client.get(&url).build().map_err(|e| {
+                crate::error::Error::IoError(format!("Failed to build request: {}", e))
+            })?;
 
         let signed_req = auth
             .sign_request_external(req)
             .await
             .map_err(|e| crate::error::Error::IoError(format!("Failed to sign request: {}", e)))?;
 
-        let response = self
-            .http_client
-            .execute(signed_req)
-            .await
-            .map_err(|e| crate::error::Error::IoError(format!("Credentials request failed: {}", e)))?;
+        let response = self.http_client.execute(signed_req).await.map_err(|e| {
+            crate::error::Error::IoError(format!("Credentials request failed: {}", e))
+        })?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -623,10 +618,10 @@ impl VendedCredentialProvider for RestCredentialProvider {
             )));
         }
 
-        let creds_response: types::LoadTableCredentialsResponse = response
-            .json()
-            .await
-            .map_err(|e| crate::error::Error::IoError(format!("Failed to parse credentials: {}", e)))?;
+        let creds_response: types::LoadTableCredentialsResponse =
+            response.json().await.map_err(|e| {
+                crate::error::Error::IoError(format!("Failed to parse credentials: {}", e))
+            })?;
 
         // Use the first credential (typically there's only one with prefix "/")
         let cred = creds_response

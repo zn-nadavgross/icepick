@@ -20,10 +20,13 @@ pub struct CatalogConfig {
 impl CatalogConfig {
     /// Create a catalog from the configuration
     pub async fn create_catalog(&self) -> Result<Arc<dyn Catalog>, String> {
-        let url = self.catalog_url.as_ref()
-            .ok_or_else(|| "Catalog URL required. Use --catalog-url or ICEPICK_CATALOG_URL".to_string())?;
+        let url = self.catalog_url.as_ref().ok_or_else(|| {
+            "Catalog URL required. Use --catalog-url or ICEPICK_CATALOG_URL".to_string()
+        })?;
 
-        let token = self.token.as_ref()
+        let token = self
+            .token
+            .as_ref()
             .ok_or_else(|| "Token required. Use --token or ICEPICK_TOKEN".to_string())?;
 
         let catalog = IcebergRestCatalog::from_url("icepick", url, token, None)
@@ -56,15 +59,24 @@ impl Catalog for RestCatalogWrapper {
         self.0.create_namespace(namespace, properties).await
     }
 
-    async fn namespace_exists(&self, namespace: &crate::spec::NamespaceIdent) -> crate::error::Result<bool> {
+    async fn namespace_exists(
+        &self,
+        namespace: &crate::spec::NamespaceIdent,
+    ) -> crate::error::Result<bool> {
         self.0.namespace_exists(namespace).await
     }
 
-    async fn list_tables(&self, namespace: &crate::spec::NamespaceIdent) -> crate::error::Result<Vec<crate::spec::TableIdent>> {
+    async fn list_tables(
+        &self,
+        namespace: &crate::spec::NamespaceIdent,
+    ) -> crate::error::Result<Vec<crate::spec::TableIdent>> {
         self.0.list_tables(namespace).await
     }
 
-    async fn table_exists(&self, identifier: &crate::spec::TableIdent) -> crate::error::Result<bool> {
+    async fn table_exists(
+        &self,
+        identifier: &crate::spec::TableIdent,
+    ) -> crate::error::Result<bool> {
         self.0.table_exists(identifier).await
     }
 
@@ -76,7 +88,10 @@ impl Catalog for RestCatalogWrapper {
         self.0.create_table(namespace, creation).await
     }
 
-    async fn load_table(&self, identifier: &crate::spec::TableIdent) -> crate::error::Result<crate::table::Table> {
+    async fn load_table(
+        &self,
+        identifier: &crate::spec::TableIdent,
+    ) -> crate::error::Result<crate::table::Table> {
         self.0.load_table(identifier).await
     }
 
@@ -90,6 +105,8 @@ impl Catalog for RestCatalogWrapper {
         old_metadata_location: &str,
         new_metadata_location: &str,
     ) -> crate::error::Result<()> {
-        self.0.update_table_metadata(identifier, old_metadata_location, new_metadata_location).await
+        self.0
+            .update_table_metadata(identifier, old_metadata_location, new_metadata_location)
+            .await
     }
 }

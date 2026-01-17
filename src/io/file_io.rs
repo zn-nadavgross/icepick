@@ -55,8 +55,6 @@ pub struct FileIO {
     default_operator: Option<Operator>,
     /// Vended credential provider (REST catalog mode)
     vended_credential_provider: Option<Arc<dyn VendedCredentialProvider>>,
-    /// Cached vended credentials (bucket -> credentials)
-    vended_credentials_cache: Arc<RwLock<HashMap<String, VendedCredentials>>>,
 }
 
 impl FileIO {
@@ -71,7 +69,6 @@ impl FileIO {
             operator_cache: Arc::new(RwLock::new(HashMap::new())),
             default_operator: Some(operator),
             vended_credential_provider: None,
-            vended_credentials_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -86,7 +83,6 @@ impl FileIO {
             operator_cache: Arc::new(RwLock::new(HashMap::new())),
             default_operator: None,
             vended_credential_provider: None,
-            vended_credentials_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -101,7 +97,6 @@ impl FileIO {
             operator_cache: Arc::new(RwLock::new(HashMap::new())),
             default_operator: None,
             vended_credential_provider: Some(provider),
-            vended_credentials_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -180,9 +175,10 @@ impl FileIO {
 
             // Check cache first
             {
-                let cache = self.operator_cache.read().map_err(|e| {
-                    Error::IoError(format!("Failed to acquire read lock: {}", e))
-                })?;
+                let cache = self
+                    .operator_cache
+                    .read()
+                    .map_err(|e| Error::IoError(format!("Failed to acquire read lock: {}", e)))?;
                 if let Some(op) = cache.get(&bucket) {
                     return Ok(op.clone());
                 }
@@ -192,11 +188,15 @@ impl FileIO {
             let creds = provider.get_credentials(path).await?;
 
             // Build operator with vended credentials
-            let endpoint = creds.endpoint.clone().or_else(|| {
-                provider.s3_endpoint().map(|s| s.to_string())
-            }).ok_or_else(|| {
-                Error::InvalidInput("No S3 endpoint available for vended credentials".to_string())
-            })?;
+            let endpoint = creds
+                .endpoint
+                .clone()
+                .or_else(|| provider.s3_endpoint().map(|s| s.to_string()))
+                .ok_or_else(|| {
+                    Error::InvalidInput(
+                        "No S3 endpoint available for vended credentials".to_string(),
+                    )
+                })?;
 
             let region = creds.region.clone().unwrap_or_else(|| "auto".to_string());
 
@@ -217,9 +217,10 @@ impl FileIO {
                 .finish();
 
             // Cache the operator
-            let mut cache = self.operator_cache.write().map_err(|e| {
-                Error::IoError(format!("Failed to acquire write lock: {}", e))
-            })?;
+            let mut cache = self
+                .operator_cache
+                .write()
+                .map_err(|e| Error::IoError(format!("Failed to acquire write lock: {}", e)))?;
             cache.insert(bucket, operator.clone());
 
             return Ok(operator);

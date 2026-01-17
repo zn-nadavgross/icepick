@@ -55,7 +55,10 @@ impl Transform {
                 return Some(Transform::Bucket(num));
             }
         }
-        if let Some(n) = s.strip_prefix("truncate[").and_then(|s| s.strip_suffix(']')) {
+        if let Some(n) = s
+            .strip_prefix("truncate[")
+            .and_then(|s| s.strip_suffix(']'))
+        {
             if let Ok(num) = n.parse::<u32>() {
                 return Some(Transform::Truncate(num));
             }
@@ -285,17 +288,15 @@ fn transform_value_for_partition(value: &Datum, transform: Transform) -> Option<
             None
         }
 
-        Transform::Truncate(width) => {
-            match value {
-                Datum::Int(v) => Some(Datum::Int((v / width as i32) * width as i32)),
-                Datum::Long(v) => Some(Datum::Long((v / width as i64) * width as i64)),
-                Datum::String(s) => {
-                    let truncated: String = s.chars().take(width as usize).collect();
-                    Some(Datum::String(truncated))
-                }
-                _ => None,
+        Transform::Truncate(width) => match value {
+            Datum::Int(v) => Some(Datum::Int((v / width as i32) * width as i32)),
+            Datum::Long(v) => Some(Datum::Long((v / width as i64) * width as i64)),
+            Datum::String(s) => {
+                let truncated: String = s.chars().take(width as usize).collect();
+                Some(Datum::String(truncated))
             }
-        }
+            _ => None,
+        },
 
         Transform::Void => None,
     }
@@ -404,7 +405,9 @@ pub fn evaluate_partition(
             .iter()
             .any(|p| evaluate_partition(p, partition_values, partition_fields, schema)),
 
-        Predicate::Not(inner) => !evaluate_partition(inner, partition_values, partition_fields, schema),
+        Predicate::Not(inner) => {
+            !evaluate_partition(inner, partition_values, partition_fields, schema)
+        }
     }
 }
 
@@ -469,9 +472,7 @@ fn decode_primitive(bytes: &[u8], prim: &PrimitiveType) -> Option<Datum> {
             Some(Datum::Timestamp(i64::from_le_bytes(arr)))
         }
         PrimitiveType::String | PrimitiveType::Uuid => {
-            String::from_utf8(bytes.to_vec())
-                .ok()
-                .map(Datum::String)
+            String::from_utf8(bytes.to_vec()).ok().map(Datum::String)
         }
         PrimitiveType::Binary | PrimitiveType::Fixed(_) => Some(Datum::Binary(bytes.to_vec())),
         PrimitiveType::Decimal { .. } => {

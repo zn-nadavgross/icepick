@@ -133,17 +133,38 @@ pub fn evaluate_bounds(
         }
 
         Predicate::And(preds) => preds.iter().all(|p| {
-            evaluate_bounds(p, schema, lower_bounds, upper_bounds, null_counts, row_count)
+            evaluate_bounds(
+                p,
+                schema,
+                lower_bounds,
+                upper_bounds,
+                null_counts,
+                row_count,
+            )
         }),
 
         Predicate::Or(preds) => preds.iter().any(|p| {
-            evaluate_bounds(p, schema, lower_bounds, upper_bounds, null_counts, row_count)
+            evaluate_bounds(
+                p,
+                schema,
+                lower_bounds,
+                upper_bounds,
+                null_counts,
+                row_count,
+            )
         }),
 
         Predicate::Not(inner) => {
             // NOT is complex for bounds pruning - we can only prune in specific cases
             // For now, be conservative
-            !evaluate_bounds(inner, schema, lower_bounds, upper_bounds, null_counts, row_count)
+            !evaluate_bounds(
+                inner,
+                schema,
+                lower_bounds,
+                upper_bounds,
+                null_counts,
+                row_count,
+            )
         }
     }
 }

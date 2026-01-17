@@ -129,9 +129,18 @@ impl Outputable for TableInfo {
 
         lines.push(String::new());
         lines.push(format!("Snapshots:    {}", self.snapshot_count));
-        lines.push(format!("Data Files:   {}", format_number(self.data_file_count as u64)));
-        lines.push(format!("Total Size:   {}", format_bytes(self.total_size_bytes)));
-        lines.push(format!("Total Records: {}", format_number(self.total_records)));
+        lines.push(format!(
+            "Data Files:   {}",
+            format_number(self.data_file_count as u64)
+        ));
+        lines.push(format!(
+            "Total Size:   {}",
+            format_bytes(self.total_size_bytes)
+        ));
+        lines.push(format!(
+            "Total Records: {}",
+            format_number(self.total_records)
+        ));
 
         lines.join("\n")
     }
@@ -217,10 +226,22 @@ impl Outputable for ScanResult {
         }
 
         lines.push(String::new());
-        lines.push(format!("Total files:        {}", format_number(self.total_files as u64)));
-        lines.push(format!("Files after filter: {}", format_number(self.files_after_filter as u64)));
-        lines.push(format!("Files pruned:       {}", format_number(self.files_pruned as u64)));
-        lines.push(format!("Pruning:            {:.1}%", self.pruning_percentage));
+        lines.push(format!(
+            "Total files:        {}",
+            format_number(self.total_files as u64)
+        ));
+        lines.push(format!(
+            "Files after filter: {}",
+            format_number(self.files_after_filter as u64)
+        ));
+        lines.push(format!(
+            "Files pruned:       {}",
+            format_number(self.files_pruned as u64)
+        ));
+        lines.push(format!(
+            "Pruning:            {:.1}%",
+            self.pruning_percentage
+        ));
 
         lines.join("\n")
     }
@@ -273,19 +294,20 @@ pub async fn execute(
                 .collect();
 
             // Get file stats
-            let (data_file_count, total_size_bytes, total_records) = if table.current_snapshot().is_some() {
-                match table.files().await {
-                    Ok(files) => {
-                        let count = files.len();
-                        let size: u64 = files.iter().map(|f| f.file_size_in_bytes as u64).sum();
-                        let records: u64 = files.iter().map(|f| f.record_count as u64).sum();
-                        (count, size, records)
+            let (data_file_count, total_size_bytes, total_records) =
+                if table.current_snapshot().is_some() {
+                    match table.files().await {
+                        Ok(files) => {
+                            let count = files.len();
+                            let size: u64 = files.iter().map(|f| f.file_size_in_bytes as u64).sum();
+                            let records: u64 = files.iter().map(|f| f.record_count as u64).sum();
+                            (count, size, records)
+                        }
+                        Err(_) => (0, 0, 0),
                     }
-                    Err(_) => (0, 0, 0),
-                }
-            } else {
-                (0, 0, 0)
-            };
+                } else {
+                    (0, 0, 0)
+                };
 
             let info = TableInfo {
                 table: table_str,
@@ -304,7 +326,10 @@ pub async fn execute(
             Ok(())
         }
 
-        TableCommand::Files { table: table_str, partition } => {
+        TableCommand::Files {
+            table: table_str,
+            partition,
+        } => {
             let table_ident = parse_table_ident(&table_str)?;
             let table = catalog
                 .load_table(&table_ident)
@@ -351,7 +376,10 @@ pub async fn execute(
             Ok(())
         }
 
-        TableCommand::Scan { table: table_str, filter } => {
+        TableCommand::Scan {
+            table: table_str,
+            filter,
+        } => {
             let table_ident = parse_table_ident(&table_str)?;
             let table = catalog
                 .load_table(&table_ident)
@@ -360,7 +388,10 @@ pub async fn execute(
 
             // Parse the filter expression if provided
             let predicate = if let Some(ref filter_str) = filter {
-                Some(parse_filter(filter_str).map_err(|e| format!("Failed to parse filter: {}", e))?)
+                Some(
+                    parse_filter(filter_str)
+                        .map_err(|e| format!("Failed to parse filter: {}", e))?,
+                )
             } else {
                 None
             };
@@ -370,7 +401,9 @@ pub async fn execute(
             if let Some(pred) = predicate {
                 scan_builder = scan_builder.filter(pred);
             }
-            let scan = scan_builder.build().map_err(|e| format!("Failed to build scan: {}", e))?;
+            let scan = scan_builder
+                .build()
+                .map_err(|e| format!("Failed to build scan: {}", e))?;
 
             // Get file counts
             let (files_after_filter, total_files) = scan

@@ -22,8 +22,8 @@ pub struct CompactOptions {
 impl Default for CompactOptions {
     fn default() -> Self {
         Self {
-            target_file_size: 256 * 1024 * 1024,     // 256 MB
-            max_input_file_size: 128 * 1024 * 1024,  // 128 MB
+            target_file_size: 256 * 1024 * 1024,    // 256 MB
+            max_input_file_size: 128 * 1024 * 1024, // 128 MB
             min_files_per_group: 3,
             partition_filter: None,
             dry_run: false,

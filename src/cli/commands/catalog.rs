@@ -22,9 +22,7 @@ pub struct CatalogInfo {
 
 impl Outputable for CatalogInfo {
     fn to_text(&self) -> String {
-        let mut lines = vec![
-            format!("Catalog Type:  {}", self.catalog_type),
-        ];
+        let mut lines = vec![format!("Catalog Type:  {}", self.catalog_type)];
 
         if let Some(ref url) = self.catalog_url {
             lines.push(format!("Catalog URL:   {}", url));

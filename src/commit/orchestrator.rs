@@ -175,8 +175,7 @@ pub async fn try_commit(
             // Calculate how many files/rows are still valid (not deleted)
             let parent_total_files =
                 parent_info.added_files_count + parent_info.existing_files_count;
-            let parent_total_rows =
-                parent_info.added_rows_count + parent_info.existing_rows_count;
+            let parent_total_rows = parent_info.added_rows_count + parent_info.existing_rows_count;
 
             // For now, we carry forward all parent manifests as existing
             // The deleted files are tracked in our new manifest
@@ -236,7 +235,8 @@ pub async fn try_commit(
 
     // 3. Create snapshot summary
     // Calculate totals: existing + added - deleted
-    let total_data_files = total_existing_files + added_files_count as i64 - deleted_files_count as i64;
+    let total_data_files =
+        total_existing_files + added_files_count as i64 - deleted_files_count as i64;
     let total_records = total_existing_rows + added_rows_count - deleted_rows_count;
 
     let mut summary_builder = Summary::builder()

@@ -17,7 +17,6 @@ pub enum CatalogCommand {
 pub struct CatalogInfo {
     pub catalog_type: String,
     pub catalog_url: Option<String>,
-    pub status: String,
 }
 
 impl Outputable for CatalogInfo {
@@ -28,7 +27,7 @@ impl Outputable for CatalogInfo {
             lines.push(format!("Catalog URL:   {}", url));
         }
 
-        lines.push(format!("Status:        {}", self.status));
+        lines.push("Status:        Connected".to_string());
 
         lines.join("\n")
     }
@@ -43,15 +42,14 @@ pub async fn execute(
     match command {
         CatalogCommand::Info => {
             // Try to connect to verify the catalog works
-            let status = match config.create_catalog().await {
-                Ok(_) => "Connected".to_string(),
-                Err(e) => format!("Error: {}", e),
-            };
+            config
+                .create_catalog()
+                .await
+                .map_err(|e| format!("Failed to connect to catalog: {}", e))?;
 
             let info = CatalogInfo {
                 catalog_type: config.catalog_type().to_string(),
                 catalog_url: config.catalog_url.clone(),
-                status,
             };
 
             print(&info, format);

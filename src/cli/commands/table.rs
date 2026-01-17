@@ -294,20 +294,22 @@ pub async fn execute(
                 .collect();
 
             // Get file stats
-            let (data_file_count, total_size_bytes, total_records) =
-                if table.current_snapshot().is_some() {
-                    match table.files().await {
-                        Ok(files) => {
-                            let count = files.len();
-                            let size: u64 = files.iter().map(|f| f.file_size_in_bytes as u64).sum();
-                            let records: u64 = files.iter().map(|f| f.record_count as u64).sum();
-                            (count, size, records)
-                        }
-                        Err(_) => (0, 0, 0),
-                    }
-                } else {
-                    (0, 0, 0)
-                };
+            let (data_file_count, total_size_bytes, total_records) = if table
+                .current_snapshot()
+                .is_some()
+            {
+                let files = table
+                        .files()
+                        .await
+                        .map_err(|e| format!("Failed to read table files: {}. This may indicate manifest corruption or permission issues.", e))?;
+
+                let count = files.len();
+                let size: u64 = files.iter().map(|f| f.file_size_in_bytes as u64).sum();
+                let records: u64 = files.iter().map(|f| f.record_count as u64).sum();
+                (count, size, records)
+            } else {
+                (0, 0, 0)
+            };
 
             let info = TableInfo {
                 table: table_str,

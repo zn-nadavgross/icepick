@@ -154,17 +154,12 @@ pub fn evaluate_bounds(
             )
         }),
 
-        Predicate::Not(inner) => {
+        Predicate::Not(_inner) => {
             // NOT is complex for bounds pruning - we can only prune in specific cases
-            // For now, be conservative
-            !evaluate_bounds(
-                inner,
-                schema,
-                lower_bounds,
-                upper_bounds,
-                null_counts,
-                row_count,
-            )
+            // For now, be conservative and don't prune (always return true)
+            // Negating the inner result would be unsafe: if inner "might match",
+            // NOT(inner) also "might match" (for rows that don't match inner)
+            true
         }
     }
 }

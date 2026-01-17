@@ -1,5 +1,6 @@
 //! Predicate expressions for filtering Iceberg tables
 
+use crate::spec::PrimitiveType;
 use std::fmt;
 
 /// A scalar value for comparison
@@ -26,6 +27,53 @@ pub enum Datum {
 }
 
 impl Datum {
+    /// Decode a datum from Iceberg binary representation
+    ///
+    /// This decodes raw bytes into a Datum based on the primitive type.
+    /// Used for reading partition values and column bounds from manifest files.
+    pub fn from_bytes(bytes: &[u8], prim_type: &PrimitiveType) -> Option<Self> {
+        match prim_type {
+            PrimitiveType::Boolean => {
+                if bytes.is_empty() {
+                    return None;
+                }
+                Some(Datum::Bool(bytes[0] != 0))
+            }
+            PrimitiveType::Int => {
+                let arr: [u8; 4] = bytes.get(..4)?.try_into().ok()?;
+                Some(Datum::Int(i32::from_le_bytes(arr)))
+            }
+            PrimitiveType::Long => {
+                let arr: [u8; 8] = bytes.get(..8)?.try_into().ok()?;
+                Some(Datum::Long(i64::from_le_bytes(arr)))
+            }
+            PrimitiveType::Float => {
+                let arr: [u8; 4] = bytes.get(..4)?.try_into().ok()?;
+                Some(Datum::Float(f32::from_le_bytes(arr)))
+            }
+            PrimitiveType::Double => {
+                let arr: [u8; 8] = bytes.get(..8)?.try_into().ok()?;
+                Some(Datum::Double(f64::from_le_bytes(arr)))
+            }
+            PrimitiveType::Date => {
+                let arr: [u8; 4] = bytes.get(..4)?.try_into().ok()?;
+                Some(Datum::Date(i32::from_le_bytes(arr)))
+            }
+            PrimitiveType::Time | PrimitiveType::Timestamp | PrimitiveType::Timestamptz => {
+                let arr: [u8; 8] = bytes.get(..8)?.try_into().ok()?;
+                Some(Datum::Timestamp(i64::from_le_bytes(arr)))
+            }
+            PrimitiveType::String | PrimitiveType::Uuid => {
+                String::from_utf8(bytes.to_vec()).ok().map(Datum::String)
+            }
+            PrimitiveType::Binary | PrimitiveType::Fixed(_) => Some(Datum::Binary(bytes.to_vec())),
+            PrimitiveType::Decimal { .. } => {
+                // Decimal requires precision/scale handling, skip for now
+                None
+            }
+        }
+    }
+
     /// Check if this datum can be compared with another
     pub fn is_comparable_to(&self, other: &Datum) -> bool {
         use Datum::*;

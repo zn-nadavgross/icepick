@@ -62,10 +62,10 @@ pub fn evaluate_bounds(
             // Get bounds for this column
             let lower = lower_bounds
                 .get(&field_id)
-                .and_then(|b| decode_bound(b, prim_type));
+                .and_then(|b| Datum::from_bytes(b, prim_type));
             let upper = upper_bounds
                 .get(&field_id)
-                .and_then(|b| decode_bound(b, prim_type));
+                .and_then(|b| Datum::from_bytes(b, prim_type));
 
             evaluate_comparison(value, *op, lower.as_ref(), upper.as_ref())
         }
@@ -105,10 +105,10 @@ pub fn evaluate_bounds(
 
             let lower = lower_bounds
                 .get(&field_id)
-                .and_then(|b| decode_bound(b, prim_type));
+                .and_then(|b| Datum::from_bytes(b, prim_type));
             let upper = upper_bounds
                 .get(&field_id)
-                .and_then(|b| decode_bound(b, prim_type));
+                .and_then(|b| Datum::from_bytes(b, prim_type));
 
             // If we have bounds, check if any value in the set could be in range
             if let (Some(lower), Some(upper)) = (&lower, &upper) {
@@ -258,50 +258,6 @@ fn evaluate_comparison(
     }
 }
 
-/// Decode bound bytes to a Datum
-fn decode_bound(bytes: &[u8], prim_type: &PrimitiveType) -> Option<Datum> {
-    match prim_type {
-        PrimitiveType::Boolean => {
-            if bytes.is_empty() {
-                return None;
-            }
-            Some(Datum::Bool(bytes[0] != 0))
-        }
-        PrimitiveType::Int => {
-            let arr: [u8; 4] = bytes.get(..4)?.try_into().ok()?;
-            Some(Datum::Int(i32::from_le_bytes(arr)))
-        }
-        PrimitiveType::Long => {
-            let arr: [u8; 8] = bytes.get(..8)?.try_into().ok()?;
-            Some(Datum::Long(i64::from_le_bytes(arr)))
-        }
-        PrimitiveType::Float => {
-            let arr: [u8; 4] = bytes.get(..4)?.try_into().ok()?;
-            Some(Datum::Float(f32::from_le_bytes(arr)))
-        }
-        PrimitiveType::Double => {
-            let arr: [u8; 8] = bytes.get(..8)?.try_into().ok()?;
-            Some(Datum::Double(f64::from_le_bytes(arr)))
-        }
-        PrimitiveType::Date => {
-            let arr: [u8; 4] = bytes.get(..4)?.try_into().ok()?;
-            Some(Datum::Date(i32::from_le_bytes(arr)))
-        }
-        PrimitiveType::Time | PrimitiveType::Timestamp | PrimitiveType::Timestamptz => {
-            let arr: [u8; 8] = bytes.get(..8)?.try_into().ok()?;
-            Some(Datum::Timestamp(i64::from_le_bytes(arr)))
-        }
-        PrimitiveType::String | PrimitiveType::Uuid => {
-            String::from_utf8(bytes.to_vec()).ok().map(Datum::String)
-        }
-        PrimitiveType::Binary | PrimitiveType::Fixed(_) => Some(Datum::Binary(bytes.to_vec())),
-        PrimitiveType::Decimal { .. } => {
-            // Decimal requires precision/scale handling, skip for now
-            None
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -397,7 +353,7 @@ mod tests {
     fn test_decode_bound_int() {
         let bytes = 42i32.to_le_bytes().to_vec();
         assert_eq!(
-            decode_bound(&bytes, &PrimitiveType::Int),
+            Datum::from_bytes(&bytes, &PrimitiveType::Int),
             Some(Datum::Int(42))
         );
     }
@@ -406,7 +362,7 @@ mod tests {
     fn test_decode_bound_string() {
         let bytes = b"hello".to_vec();
         assert_eq!(
-            decode_bound(&bytes, &PrimitiveType::String),
+            Datum::from_bytes(&bytes, &PrimitiveType::String),
             Some(Datum::String("hello".to_string()))
         );
     }

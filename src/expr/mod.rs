@@ -28,6 +28,7 @@
 //! ```
 
 mod bounds_eval;
+pub(crate) mod date;
 mod parser;
 mod partition_eval;
 mod predicate;

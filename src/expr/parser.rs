@@ -5,6 +5,7 @@
 //! - `status = 'active' AND age > 18`
 //! - `region IN ('us-west', 'eu-central')`
 
+use super::date::parse_date_to_days;
 use crate::error::{Error, Result};
 use crate::expr::{ComparisonOp, Datum, Predicate};
 
@@ -228,46 +229,6 @@ fn split_by_keyword<'a>(input: &'a str, keyword: &str) -> Vec<&'a str> {
 
     result.push(&input[start..]);
     result
-}
-
-/// Parse a date string like "2024-01-15" to days since epoch
-fn parse_date_to_days(s: &str) -> Option<i32> {
-    let parts: Vec<&str> = s.split('-').collect();
-    if parts.len() != 3 {
-        return None;
-    }
-
-    let year: i32 = parts[0].parse().ok()?;
-    let month: i32 = parts[1].parse().ok()?;
-    let day: i32 = parts[2].parse().ok()?;
-
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
-        return None;
-    }
-
-    // Calculate days since Unix epoch (1970-01-01)
-    let year_days = year_to_days(year);
-    let is_leap = is_leap_year(year);
-    let days_before_month: [i32; 12] = if is_leap {
-        [0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335]
-    } else {
-        [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
-    };
-
-    Some(year_days + days_before_month[(month - 1) as usize] + day - 1)
-}
-
-fn year_to_days(year: i32) -> i32 {
-    let y = year - 1970;
-    if y >= 0 {
-        y * 365 + (y + 1) / 4 - (y + 69) / 100 + (y + 369) / 400
-    } else {
-        y * 365 + y / 4 - (y - 31) / 100 + (y - 31) / 400
-    }
-}
-
-fn is_leap_year(year: i32) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 }
 
 #[cfg(test)]

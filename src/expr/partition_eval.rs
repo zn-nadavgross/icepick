@@ -3,8 +3,11 @@
 //! This module provides functions to evaluate predicates against partition values
 //! to determine if a file might contain matching rows.
 
+use super::date::{
+    days_to_year, days_to_year_month, parse_date_to_days, parse_date_year, parse_date_year_month,
+};
 use crate::expr::{ColumnRef, ComparisonOp, Datum, Predicate};
-use crate::spec::{PartitionField, PartitionSpec, PrimitiveType, Schema, Type};
+use crate::spec::{PartitionField, PartitionSpec, Schema, Type};
 use std::collections::HashMap;
 
 /// Iceberg partition transforms
@@ -416,180 +419,15 @@ fn decode_partition_value(bytes: &[u8], field_type: Option<&Type>) -> Option<Dat
     let typ = field_type?;
 
     match typ {
-        Type::Primitive(prim) => decode_primitive(bytes, prim),
+        Type::Primitive(prim) => Datum::from_bytes(bytes, prim),
         _ => None,
-    }
-}
-
-fn decode_primitive(bytes: &[u8], prim: &PrimitiveType) -> Option<Datum> {
-    match prim {
-        PrimitiveType::Boolean => {
-            if bytes.is_empty() {
-                return None;
-            }
-            Some(Datum::Bool(bytes[0] != 0))
-        }
-        PrimitiveType::Int => {
-            if bytes.len() < 4 {
-                return None;
-            }
-            let arr: [u8; 4] = bytes[..4].try_into().ok()?;
-            Some(Datum::Int(i32::from_le_bytes(arr)))
-        }
-        PrimitiveType::Long => {
-            if bytes.len() < 8 {
-                return None;
-            }
-            let arr: [u8; 8] = bytes[..8].try_into().ok()?;
-            Some(Datum::Long(i64::from_le_bytes(arr)))
-        }
-        PrimitiveType::Float => {
-            if bytes.len() < 4 {
-                return None;
-            }
-            let arr: [u8; 4] = bytes[..4].try_into().ok()?;
-            Some(Datum::Float(f32::from_le_bytes(arr)))
-        }
-        PrimitiveType::Double => {
-            if bytes.len() < 8 {
-                return None;
-            }
-            let arr: [u8; 8] = bytes[..8].try_into().ok()?;
-            Some(Datum::Double(f64::from_le_bytes(arr)))
-        }
-        PrimitiveType::Date => {
-            if bytes.len() < 4 {
-                return None;
-            }
-            let arr: [u8; 4] = bytes[..4].try_into().ok()?;
-            Some(Datum::Date(i32::from_le_bytes(arr)))
-        }
-        PrimitiveType::Time | PrimitiveType::Timestamp | PrimitiveType::Timestamptz => {
-            if bytes.len() < 8 {
-                return None;
-            }
-            let arr: [u8; 8] = bytes[..8].try_into().ok()?;
-            Some(Datum::Timestamp(i64::from_le_bytes(arr)))
-        }
-        PrimitiveType::String | PrimitiveType::Uuid => {
-            String::from_utf8(bytes.to_vec()).ok().map(Datum::String)
-        }
-        PrimitiveType::Binary | PrimitiveType::Fixed(_) => Some(Datum::Binary(bytes.to_vec())),
-        PrimitiveType::Decimal { .. } => {
-            // Decimal decoding is complex, skip for now
-            None
-        }
-    }
-}
-
-// Date utility functions
-
-/// Convert days since Unix epoch to year (Iceberg uses 1970-01-01 as epoch)
-fn days_to_year(days: i32) -> i32 {
-    // Approximate calculation
-    let approx_years = days / 365;
-    let year = 1970 + approx_years;
-
-    // Adjust for leap years and edge cases
-    let year_start = year_to_days(year);
-    if days < year_start {
-        year - 1
-    } else if days >= year_to_days(year + 1) {
-        year + 1
-    } else {
-        year
-    }
-}
-
-/// Convert days since Unix epoch to (year, month) where month is 1-12
-fn days_to_year_month(days: i32) -> (i32, i32) {
-    let year = days_to_year(days);
-    let year_start = year_to_days(year);
-    let day_of_year = days - year_start;
-
-    let is_leap = is_leap_year(year);
-    let days_in_months: [i32; 12] = if is_leap {
-        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    } else {
-        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    };
-
-    let mut cumulative = 0;
-    for (i, &days_in_month) in days_in_months.iter().enumerate() {
-        if day_of_year < cumulative + days_in_month {
-            return (year, (i + 1) as i32);
-        }
-        cumulative += days_in_month;
-    }
-
-    (year, 12)
-}
-
-/// Convert year to days since Unix epoch (Jan 1 of that year)
-fn year_to_days(year: i32) -> i32 {
-    let y = year - 1970;
-    if y >= 0 {
-        y * 365 + (y + 1) / 4 - (y + 69) / 100 + (y + 369) / 400
-    } else {
-        y * 365 + y / 4 - (y - 31) / 100 + (y - 31) / 400
-    }
-}
-
-fn is_leap_year(year: i32) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
-}
-
-/// Parse a date string like "2024-01-15" to year
-fn parse_date_year(s: &str) -> Option<i32> {
-    let parts: Vec<&str> = s.split('-').collect();
-    if !parts.is_empty() {
-        parts[0].parse().ok()
-    } else {
-        None
-    }
-}
-
-/// Parse a date string like "2024-01-15" to (year, month)
-fn parse_date_year_month(s: &str) -> Option<(i32, i32)> {
-    let parts: Vec<&str> = s.split('-').collect();
-    if parts.len() >= 2 {
-        let year = parts[0].parse().ok()?;
-        let month = parts[1].parse().ok()?;
-        Some((year, month))
-    } else {
-        None
-    }
-}
-
-/// Parse a date string like "2024-01-15" to days since epoch
-fn parse_date_to_days(s: &str) -> Option<i32> {
-    let parts: Vec<&str> = s.split('-').collect();
-    if parts.len() >= 3 {
-        let year: i32 = parts[0].parse().ok()?;
-        let month: i32 = parts[1].parse().ok()?;
-        let day: i32 = parts[2].parse().ok()?;
-
-        let year_days = year_to_days(year);
-        let is_leap = is_leap_year(year);
-        let days_before_month: [i32; 12] = if is_leap {
-            [0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335]
-        } else {
-            [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
-        };
-
-        if (1..=12).contains(&month) {
-            Some(year_days + days_before_month[(month - 1) as usize] + day - 1)
-        } else {
-            None
-        }
-    } else {
-        None
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::date::year_to_days;
 
     #[test]
     fn test_transform_parse() {
@@ -626,14 +464,14 @@ mod tests {
         // Int
         let bytes = 42i32.to_le_bytes().to_vec();
         assert_eq!(
-            decode_primitive(&bytes, &PrimitiveType::Int),
+            Datum::from_bytes(&bytes, &PrimitiveType::Int),
             Some(Datum::Int(42))
         );
 
         // String
         let bytes = b"hello".to_vec();
         assert_eq!(
-            decode_primitive(&bytes, &PrimitiveType::String),
+            Datum::from_bytes(&bytes, &PrimitiveType::String),
             Some(Datum::String("hello".to_string()))
         );
     }

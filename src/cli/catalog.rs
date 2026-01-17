@@ -1,68 +1,95 @@
 //! Catalog connection utilities
 
+use crate::catalog::rest::IcebergRestCatalog;
 use crate::catalog::Catalog;
-use crate::{R2Catalog, S3TablesCatalog};
 use std::sync::Arc;
 
 /// Configuration for connecting to a catalog
+///
+/// The simplest way to connect to any Iceberg REST catalog is with just two parameters:
+/// - `catalog_url`: The base URL of the catalog (e.g., `https://catalog.cloudflarestorage.com/account/bucket`)
+/// - `token`: Bearer token for authentication
 #[derive(Debug, Clone)]
 pub struct CatalogConfig {
-    /// S3 Tables ARN
-    pub arn: Option<String>,
-    /// R2 Account ID
-    pub r2_account: Option<String>,
-    /// R2 Bucket
-    pub r2_bucket: Option<String>,
-    /// API Token (R2/REST)
+    /// Iceberg REST catalog URL
+    pub catalog_url: Option<String>,
+    /// API Token for catalog authentication
     pub token: Option<String>,
-    /// REST catalog endpoint (reserved for future use)
-    pub endpoint: Option<String>,
 }
 
 impl CatalogConfig {
     /// Create a catalog from the configuration
-    ///
-    /// Priority order:
-    /// 1. `--arn` -> S3TablesCatalog
-    /// 2. `--r2-account` + `--r2-bucket` + `--token` -> R2Catalog
     pub async fn create_catalog(&self) -> Result<Arc<dyn Catalog>, String> {
-        // Priority 1: S3 Tables ARN
-        if let Some(ref arn) = self.arn {
-            let catalog = S3TablesCatalog::from_arn("icepick", arn)
-                .await
-                .map_err(|e| format!("Failed to create S3 Tables catalog: {}", e))?;
-            return Ok(Arc::new(catalog));
-        }
+        let url = self.catalog_url.as_ref()
+            .ok_or_else(|| "Catalog URL required. Use --catalog-url or ICEPICK_CATALOG_URL".to_string())?;
 
-        // Priority 2: R2 Catalog
-        if let (Some(ref account), Some(ref bucket)) = (&self.r2_account, &self.r2_bucket) {
-            let token = self.token.as_ref()
-                .ok_or_else(|| "R2 catalog requires --token or ICEPICK_TOKEN".to_string())?;
+        let token = self.token.as_ref()
+            .ok_or_else(|| "Token required. Use --token or ICEPICK_TOKEN".to_string())?;
 
-            let catalog = R2Catalog::new("icepick", account, bucket, token)
-                .await
-                .map_err(|e| format!("Failed to create R2 catalog: {}", e))?;
-            return Ok(Arc::new(catalog));
-        }
+        let catalog = IcebergRestCatalog::from_url("icepick", url, token, None)
+            .await
+            .map_err(|e| format!("Failed to create catalog: {}", e))?;
 
-        // REST catalog support is reserved for future implementation
-        if self.endpoint.is_some() {
-            return Err("REST catalog endpoint support is not yet implemented. Use --arn for S3 Tables or --r2-account/--r2-bucket for R2.".to_string());
-        }
-
-        Err("No catalog configuration specified. Use --arn for S3 Tables or --r2-account/--r2-bucket for Cloudflare R2.".to_string())
+        Ok(Arc::new(RestCatalogWrapper(catalog)))
     }
 
     /// Get a description of the catalog type
     pub fn catalog_type(&self) -> &'static str {
-        if self.arn.is_some() {
-            "S3 Tables"
-        } else if self.r2_account.is_some() && self.r2_bucket.is_some() {
-            "Cloudflare R2"
-        } else if self.endpoint.is_some() {
-            "REST (not yet supported)"
+        if self.catalog_url.is_some() {
+            "REST Catalog"
         } else {
             "Unknown"
         }
+    }
+}
+
+/// Wrapper to implement Catalog trait for IcebergRestCatalog
+struct RestCatalogWrapper(IcebergRestCatalog);
+
+#[async_trait::async_trait]
+impl Catalog for RestCatalogWrapper {
+    async fn create_namespace(
+        &self,
+        namespace: &crate::spec::NamespaceIdent,
+        properties: std::collections::HashMap<String, String>,
+    ) -> crate::error::Result<()> {
+        self.0.create_namespace(namespace, properties).await
+    }
+
+    async fn namespace_exists(&self, namespace: &crate::spec::NamespaceIdent) -> crate::error::Result<bool> {
+        self.0.namespace_exists(namespace).await
+    }
+
+    async fn list_tables(&self, namespace: &crate::spec::NamespaceIdent) -> crate::error::Result<Vec<crate::spec::TableIdent>> {
+        self.0.list_tables(namespace).await
+    }
+
+    async fn table_exists(&self, identifier: &crate::spec::TableIdent) -> crate::error::Result<bool> {
+        self.0.table_exists(identifier).await
+    }
+
+    async fn create_table(
+        &self,
+        namespace: &crate::spec::NamespaceIdent,
+        creation: crate::spec::TableCreation,
+    ) -> crate::error::Result<crate::table::Table> {
+        self.0.create_table(namespace, creation).await
+    }
+
+    async fn load_table(&self, identifier: &crate::spec::TableIdent) -> crate::error::Result<crate::table::Table> {
+        self.0.load_table(identifier).await
+    }
+
+    async fn drop_table(&self, identifier: &crate::spec::TableIdent) -> crate::error::Result<()> {
+        self.0.drop_table(identifier).await
+    }
+
+    async fn update_table_metadata(
+        &self,
+        identifier: &crate::spec::TableIdent,
+        old_metadata_location: &str,
+        new_metadata_location: &str,
+    ) -> crate::error::Result<()> {
+        self.0.update_table_metadata(identifier, old_metadata_location, new_metadata_location).await
     }
 }

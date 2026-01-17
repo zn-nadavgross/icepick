@@ -13,6 +13,21 @@ impl BearerTokenAuthProvider {
             token: token.into(),
         }
     }
+
+    /// Sign a request with bearer token authentication.
+    /// This version returns a standard Result for use outside the catalog module.
+    pub async fn sign_request_external(
+        &self,
+        mut request: reqwest::Request,
+    ) -> std::result::Result<reqwest::Request, String> {
+        request.headers_mut().insert(
+            reqwest::header::AUTHORIZATION,
+            format!("Bearer {}", self.token)
+                .parse()
+                .map_err(|e| format!("Failed to create auth header: {}", e))?,
+        );
+        Ok(request)
+    }
 }
 
 #[cfg_attr(not(target_family = "wasm"), async_trait)]

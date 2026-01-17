@@ -3,4 +3,4 @@
 
 mod file_io;
 
-pub use file_io::{AwsCredentials, FileIO};
+pub use file_io::{AwsCredentials, FileIO, VendedCredentialProvider, VendedCredentials};

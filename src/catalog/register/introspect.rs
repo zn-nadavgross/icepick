@@ -198,6 +198,72 @@ pub fn parse_hive_partition_values(path: &str) -> HashMap<String, String> {
         .collect()
 }
 
+/// Convert raw string partition values to typed PartitionValue based on schema.
+///
+/// Looks up each partition column in the schema to determine the correct type.
+/// Unknown columns are treated as strings.
+///
+/// # Example
+/// ```
+/// use icepick::catalog::register::convert_partition_values;
+/// use icepick::catalog::register::PartitionValue;
+/// use icepick::spec::{NestedField, PrimitiveType, Schema, Type};
+/// use std::collections::HashMap;
+///
+/// let schema = Schema::builder()
+///     .with_fields(vec![
+///         NestedField::required_field(1, "year".to_string(), Type::Primitive(PrimitiveType::Int)),
+///     ])
+///     .build()
+///     .unwrap();
+///
+/// let mut raw = HashMap::new();
+/// raw.insert("year".to_string(), "2024".to_string());
+///
+/// let typed = convert_partition_values(&raw, &schema).unwrap();
+/// assert_eq!(typed.get("year"), Some(&PartitionValue::Int(2024)));
+/// ```
+pub fn convert_partition_values(
+    raw_values: &HashMap<String, String>,
+    schema: &Schema,
+) -> Result<HashMap<String, PartitionValue>> {
+    let mut typed_values = HashMap::new();
+
+    for (name, raw) in raw_values {
+        let value = match schema.fields().iter().find(|f| f.name() == name) {
+            Some(field) => parse_value_by_type(field.field_type(), raw)?,
+            None => PartitionValue::String(raw.clone()),
+        };
+        typed_values.insert(name.clone(), value);
+    }
+
+    Ok(typed_values)
+}
+
+fn parse_value_by_type(field_type: &crate::spec::Type, raw: &str) -> Result<PartitionValue> {
+    use crate::spec::PrimitiveType;
+
+    match field_type {
+        crate::spec::Type::Primitive(PrimitiveType::Boolean) => raw
+            .parse::<bool>()
+            .map(PartitionValue::Bool)
+            .map_err(|e| Error::invalid_input(format!("Invalid boolean '{}': {}", raw, e))),
+        crate::spec::Type::Primitive(PrimitiveType::Int)
+        | crate::spec::Type::Primitive(PrimitiveType::Date) => raw
+            .parse::<i32>()
+            .map(PartitionValue::Int)
+            .map_err(|e| Error::invalid_input(format!("Invalid int '{}': {}", raw, e))),
+        crate::spec::Type::Primitive(PrimitiveType::Long)
+        | crate::spec::Type::Primitive(PrimitiveType::Time)
+        | crate::spec::Type::Primitive(PrimitiveType::Timestamp)
+        | crate::spec::Type::Primitive(PrimitiveType::Timestamptz) => raw
+            .parse::<i64>()
+            .map(PartitionValue::Long)
+            .map_err(|e| Error::invalid_input(format!("Invalid long '{}': {}", raw, e))),
+        _ => Ok(PartitionValue::String(raw.to_string())),
+    }
+}
+
 fn parse_partition_value(
     schema: &Schema,
     field: &PartitionField,

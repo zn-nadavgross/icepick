@@ -190,7 +190,7 @@ pub async fn execute(
         .map_err(|e| format!("Failed to load table: {}", e))?;
 
     // Build compaction options
-    let mut options = CompactOptions::new()
+    let options = CompactOptions::new()
         .with_target_file_size(args.target_size)
         .map_err(|e| format!("Invalid target size: {}", e))?
         .with_max_input_file_size(args.max_input_size)
@@ -199,9 +199,11 @@ pub async fn execute(
         .map_err(|e| format!("Invalid min files: {}", e))?
         .with_dry_run(args.dry_run);
 
-    if let Some(partition) = args.partition {
-        options = options.with_partition_filter(partition);
-    }
+    let options = if let Some(partition) = args.partition {
+        options.with_partition_filter(partition)
+    } else {
+        options
+    };
 
     // Create compaction plan
     let plan = plan_compaction(&table, &options)

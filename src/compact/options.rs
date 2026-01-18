@@ -1,6 +1,6 @@
 //! Compaction options
 
-use crate::error::{Error, Result};
+use crate::error::Error;
 
 /// Options for bin-pack compaction
 #[derive(Debug, Clone)]
@@ -54,7 +54,7 @@ impl CompactOptions {
     /// - `size` is 0
     /// - `size` is less than 1KB (1024 bytes)
     /// - `size` is less than or equal to the current `max_input_file_size`
-    pub fn with_target_file_size(mut self, size: u64) -> Result<Self> {
+    pub fn with_target_file_size(mut self, size: u64) -> crate::error::Result<Self> {
         if size == 0 {
             return Err(Error::invalid_input(
                 "target_file_size must be greater than 0",
@@ -88,7 +88,7 @@ impl CompactOptions {
     /// Returns an error if:
     /// - `size` is 0
     /// - `size` is greater than or equal to the current `target_file_size`
-    pub fn with_max_input_file_size(mut self, size: u64) -> Result<Self> {
+    pub fn with_max_input_file_size(mut self, size: u64) -> crate::error::Result<Self> {
         if size == 0 {
             return Err(Error::invalid_input(
                 "max_input_file_size must be greater than 0",
@@ -112,7 +112,7 @@ impl CompactOptions {
     /// # Errors
     ///
     /// Returns an error if `count` is less than 2 (cannot compact fewer than 2 files)
-    pub fn with_min_files_per_group(mut self, count: usize) -> Result<Self> {
+    pub fn with_min_files_per_group(mut self, count: usize) -> crate::error::Result<Self> {
         if count < 2 {
             return Err(Error::invalid_input(format!(
                 "min_files_per_group must be at least 2 (cannot compact fewer than 2 files), got {}",

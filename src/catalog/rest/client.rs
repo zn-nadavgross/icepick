@@ -49,7 +49,10 @@ async fn fetch_config_response(
     let body_text = response
         .text()
         .await
-        .unwrap_or_else(|_| "Unable to read response".to_string());
+        .map_err(|e| CatalogError::HttpError(format!(
+            "Failed to read response body from {}: {}. This may indicate a network interruption or invalid response encoding.",
+            config_url, e
+        )))?;
 
     if !status.is_success() {
         return Err(CatalogError::HttpError(format!(

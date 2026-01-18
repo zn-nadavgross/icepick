@@ -51,6 +51,12 @@ pub struct ListTablesResponse {
 
 #[derive(Deserialize)]
 #[allow(dead_code)]
+pub struct ListNamespacesResponse {
+    pub namespaces: Vec<Vec<String>>,
+}
+
+#[derive(Deserialize)]
+#[allow(dead_code)]
 pub struct TableIdentifier {
     pub namespace: Vec<String>,
     pub name: String,

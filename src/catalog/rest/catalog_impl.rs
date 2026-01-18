@@ -72,6 +72,28 @@ impl IcebergRestCatalog {
         Ok(true)
     }
 
+    #[allow(dead_code)] // Will be used when trait impl is added
+    pub(super) async fn list_namespaces_impl(
+        &self,
+    ) -> crate::error::Result<Vec<crate::spec::NamespaceIdent>> {
+        let url = self.url("namespaces");
+
+        let req = self.build_request(
+            self.http_client
+                .get(&url)
+                .header("Accept", "application/json"),
+        )?;
+
+        let response: ListNamespacesResponse =
+            self.execute_and_parse(req, "namespaces response").await?;
+
+        Ok(response
+            .namespaces
+            .into_iter()
+            .map(crate::spec::NamespaceIdent::new)
+            .collect())
+    }
+
     pub(super) async fn list_tables_impl(
         &self,
         namespace: &crate::spec::NamespaceIdent,

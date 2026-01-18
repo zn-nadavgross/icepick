@@ -97,7 +97,7 @@ impl Outputable for CompactionPlanOutput {
         lines.push(format!(
             "  Bytes:   {} -> ~{}",
             format_bytes(self.total_input_bytes),
-            format_bytes(self.total_input_bytes) // Size doesn't change much
+            format_bytes(self.total_input_bytes)
         ));
 
         if self.dry_run {

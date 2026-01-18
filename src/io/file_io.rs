@@ -178,7 +178,10 @@ impl FileIO {
                 let cache = self
                     .operator_cache
                     .read()
-                    .map_err(|e| Error::IoError(format!("Failed to acquire read lock: {}", e)))?;
+                    .map_err(|e| Error::IoError(format!(
+                        "Lock poisoned due to panic in another thread. This indicates a critical bug. Original error: {}",
+                        e
+                    )))?;
                 if let Some(op) = cache.get(&bucket) {
                     return Ok(op.clone());
                 }
@@ -220,7 +223,10 @@ impl FileIO {
             let mut cache = self
                 .operator_cache
                 .write()
-                .map_err(|e| Error::IoError(format!("Failed to acquire write lock: {}", e)))?;
+                .map_err(|e| Error::IoError(format!(
+                    "Lock poisoned due to panic in another thread. This indicates a critical bug. Original error: {}",
+                    e
+                )))?;
             cache.insert(bucket, operator.clone());
 
             return Ok(operator);
@@ -242,7 +248,10 @@ impl FileIO {
             let cache = self
                 .operator_cache
                 .read()
-                .map_err(|e| Error::IoError(format!("Failed to acquire read lock: {}", e)))?;
+                .map_err(|e| Error::IoError(format!(
+                    "Lock poisoned due to panic in another thread. This indicates a critical bug. Original error: {}",
+                    e
+                )))?;
             if let Some(op) = cache.get(bucket) {
                 return Ok(op.clone());
             }
@@ -252,7 +261,10 @@ impl FileIO {
         let mut cache = self
             .operator_cache
             .write()
-            .map_err(|e| Error::IoError(format!("Failed to acquire write lock: {}", e)))?;
+            .map_err(|e| Error::IoError(format!(
+                "Lock poisoned due to panic in another thread. This indicates a critical bug. Original error: {}",
+                e
+            )))?;
 
         // Double-check pattern
         if let Some(op) = cache.get(bucket) {

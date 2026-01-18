@@ -157,7 +157,7 @@ impl CompactionPlan {
             // Sort by size ascending for better bin-packing
             files.sort_by_key(|f| f.file_size_in_bytes());
 
-            // Greedy bin-packing (first-fit decreasing)
+            // Greedy bin-packing (first-fit)
             let groups = bin_pack_files(
                 files,
                 options.target_file_size(),
@@ -229,7 +229,7 @@ fn extract_partition_value(file_path: &str) -> Option<String> {
     }
 }
 
-/// Greedy bin-packing algorithm (first-fit decreasing)
+/// Greedy bin-packing algorithm (first-fit)
 fn bin_pack_files(
     files: Vec<DataFile>,
     target_size: u64,

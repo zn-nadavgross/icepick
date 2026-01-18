@@ -301,6 +301,33 @@ Snapshot cleanup respects:
 - **Retention count** - Keeps the N most recent regardless of age
 - **Age threshold** - Only expires snapshots older than the threshold
 
+## Committing Parquet Files
+
+Commit existing Parquet files to an Iceberg table:
+
+```bash
+# Preview what would be committed
+icepick commit /data/**/*.parquet --namespace prod --table events --dry-run
+
+# Commit files to existing table
+icepick commit /data/**/*.parquet --namespace prod --table events
+
+# Create new table with partition spec
+icepick commit /data/**/*.parquet --namespace prod --table events \
+  --create --partition year:int,month:int
+
+# For non-Hive paths, specify partition values explicitly
+icepick commit /flat/*.parquet --namespace prod --table events \
+  --partition-values year=2024,month=01
+```
+
+The command:
+- Uses first file's schema (or `--exemplar`) as the reference
+- Validates all files match the schema
+- Extracts partition values from Hive-style paths automatically
+- Supports `--partition-values` for flat directory structures
+- Shows detailed plan with `--dry-run` before committing
+
 ## Examples
 
 Explore complete working examples in the [`examples/`](examples/) directory:

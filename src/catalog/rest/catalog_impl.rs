@@ -72,7 +72,6 @@ impl IcebergRestCatalog {
         Ok(true)
     }
 
-    #[allow(dead_code)] // Will be used when trait impl is added
     pub(super) async fn list_namespaces_impl(
         &self,
     ) -> crate::error::Result<Vec<crate::spec::NamespaceIdent>> {

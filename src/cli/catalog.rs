@@ -66,6 +66,10 @@ impl Catalog for RestCatalogWrapper {
         self.0.namespace_exists(namespace).await
     }
 
+    async fn list_namespaces(&self) -> crate::error::Result<Vec<crate::spec::NamespaceIdent>> {
+        self.0.list_namespaces().await
+    }
+
     async fn list_tables(
         &self,
         namespace: &crate::spec::NamespaceIdent,

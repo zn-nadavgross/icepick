@@ -256,6 +256,10 @@ impl Catalog for R2Catalog {
         self.inner.namespace_exists(namespace).await
     }
 
+    async fn list_namespaces(&self) -> Result<Vec<NamespaceIdent>> {
+        self.inner.list_namespaces().await
+    }
+
     async fn list_tables(&self, namespace: &NamespaceIdent) -> Result<Vec<TableIdent>> {
         self.inner.list_tables(namespace).await
     }
@@ -306,6 +310,10 @@ impl Catalog for R2Catalog {
 
     async fn namespace_exists(&self, namespace: &NamespaceIdent) -> Result<bool> {
         self.inner.namespace_exists(namespace).await
+    }
+
+    async fn list_namespaces(&self) -> Result<Vec<NamespaceIdent>> {
+        self.inner.list_namespaces().await
     }
 
     async fn list_tables(&self, namespace: &NamespaceIdent) -> Result<Vec<TableIdent>> {

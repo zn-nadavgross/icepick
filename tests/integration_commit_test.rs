@@ -9,12 +9,20 @@ use opendal::Operator;
 use std::collections::HashMap;
 
 // Simple in-memory catalog for testing
-struct TestCatalog;
+struct TestCatalog {
+    file_io: FileIO,
+}
+
+impl TestCatalog {
+    fn new(file_io: FileIO) -> Self {
+        Self { file_io }
+    }
+}
 
 #[async_trait::async_trait]
 impl Catalog for TestCatalog {
     fn file_io(&self) -> &FileIO {
-        panic!("TestCatalog::file_io() is not supported in tests")
+        &self.file_io
     }
 
     async fn create_namespace(
@@ -122,7 +130,7 @@ async fn test_end_to_end_commit_with_stats() {
         .unwrap();
 
     // Commit
-    let catalog = TestCatalog;
+    let catalog = TestCatalog::new(file_io.clone());
     let timestamp_ms = 1234567890;
     table
         .transaction()
@@ -217,7 +225,7 @@ async fn test_multiple_sequential_commits() {
     );
 
     // First commit
-    let catalog = TestCatalog;
+    let catalog = TestCatalog::new(file_io.clone());
     let data_file1 = DataFile::builder()
         .with_file_path("memory://warehouse/test/multi/data/file1.parquet")
         .with_file_format("PARQUET")

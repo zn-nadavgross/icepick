@@ -11,7 +11,9 @@ use crate::catalog::register::{
 };
 use crate::cli::catalog::CatalogConfig;
 use crate::cli::output::{format_bytes, format_number, print, OutputFormat, Outputable};
-use crate::spec::{NamespaceIdent, PartitionField, PartitionSpec, Schema, TableIdent};
+use crate::spec::{
+    NamespaceIdent, PartitionField, PartitionSpec, PrimitiveType, Schema, TableIdent, Type,
+};
 
 /// Commit Parquet files to an Iceberg table
 #[derive(Debug, Args)]
@@ -36,7 +38,7 @@ pub struct CommitArgs {
     pub create: bool,
 
     /// Partition columns for new table (e.g., year:int,month:int)
-    #[arg(long)]
+    #[arg(long, requires = "create")]
     pub partition: Option<String>,
 
     /// Explicit partition values for all files (e.g., year=2024,month=01)
@@ -60,7 +62,6 @@ pub struct CommitPlanOutput {
     pub total_bytes: u64,
     pub partitions: Vec<PartitionSummary>,
     pub schema_mismatches: Vec<SchemaMismatch>,
-    pub already_committed: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -124,13 +125,6 @@ impl Outputable for CommitPlanOutput {
             }
         }
 
-        if self.already_committed > 0 {
-            lines.push(format!(
-                "Already committed (will skip): {}",
-                self.already_committed
-            ));
-        }
-
         lines.push(String::new());
         lines.push("Run without --dry-run to commit.".to_string());
 
@@ -173,8 +167,30 @@ impl Outputable for CommitResultOutput {
     }
 }
 
+/// Parse a type string into a PrimitiveType
+pub fn parse_type_str(type_str: &str) -> Result<PrimitiveType, String> {
+    match type_str.to_lowercase().as_str() {
+        "boolean" | "bool" => Ok(PrimitiveType::Boolean),
+        "int" | "integer" => Ok(PrimitiveType::Int),
+        "long" | "bigint" => Ok(PrimitiveType::Long),
+        "float" => Ok(PrimitiveType::Float),
+        "double" => Ok(PrimitiveType::Double),
+        "date" => Ok(PrimitiveType::Date),
+        "time" => Ok(PrimitiveType::Time),
+        "timestamp" => Ok(PrimitiveType::Timestamp),
+        "timestamptz" => Ok(PrimitiveType::Timestamptz),
+        "string" => Ok(PrimitiveType::String),
+        "uuid" => Ok(PrimitiveType::Uuid),
+        "binary" => Ok(PrimitiveType::Binary),
+        _ => Err(format!(
+            "Unknown type '{}'. Valid types: boolean, int, long, float, double, date, time, timestamp, timestamptz, string, uuid, binary",
+            type_str
+        )),
+    }
+}
+
 /// Parse partition spec like "year:int,month:int" into vec of (name, type)
-fn parse_partition_spec(spec: &str) -> Result<Vec<(String, String)>, String> {
+pub fn parse_partition_spec(spec: &str) -> Result<Vec<(String, PrimitiveType)>, String> {
     spec.split(',')
         .map(|part| {
             let parts: Vec<&str> = part.trim().splitn(2, ':').collect();
@@ -184,13 +200,14 @@ fn parse_partition_spec(spec: &str) -> Result<Vec<(String, String)>, String> {
                     part
                 ));
             }
-            Ok((parts[0].to_string(), parts[1].to_string()))
+            let parsed_type = parse_type_str(parts[1])?;
+            Ok((parts[0].to_string(), parsed_type))
         })
         .collect()
 }
 
 /// Parse partition values like "year=2024,month=01" into HashMap
-fn parse_partition_values_arg(values: &str) -> Result<HashMap<String, String>, String> {
+pub fn parse_partition_values_arg(values: &str) -> Result<HashMap<String, String>, String> {
     values
         .split(',')
         .map(|part| {
@@ -209,10 +226,10 @@ fn parse_partition_values_arg(values: &str) -> Result<HashMap<String, String>, S
 /// Expand glob pattern to list of file paths
 fn expand_glob(pattern: &str) -> Result<Vec<String>, String> {
     let paths: Result<Vec<_>, _> = glob::glob(pattern)
-        .map_err(|e| format!("Invalid glob pattern: {}", e))?
+        .map_err(|e| format!("Invalid glob pattern '{}': {}", pattern, e))?
         .collect();
 
-    let paths = paths.map_err(|e| format!("Error reading files: {}", e))?;
+    let paths = paths.map_err(|e| format!("Error reading files matching '{}': {}", pattern, e))?;
 
     let parquet_files: Vec<String> = paths
         .into_iter()
@@ -231,24 +248,41 @@ fn expand_glob(pattern: &str) -> Result<Vec<String>, String> {
 }
 
 /// Build a partition spec from a spec string and schema
-fn build_partition_spec(spec_str: &str, schema: &Schema) -> Result<PartitionSpec, String> {
+pub fn build_partition_spec(spec_str: &str, schema: &Schema) -> Result<PartitionSpec, String> {
     let parts = parse_partition_spec(spec_str)?;
 
     let fields: Vec<PartitionField> = parts
         .iter()
         .enumerate()
-        .map(|(idx, (name, _type_str))| {
-            // Find source field ID in schema
-            let source_id = schema
+        .map(|(idx, (name, expected_type))| {
+            // Find source field in schema
+            let field = schema
                 .fields()
                 .iter()
                 .find(|f| f.name() == name)
-                .map(|f| f.id())
                 .ok_or_else(|| format!("Partition column '{}' not found in schema", name))?;
+
+            // Validate type matches schema
+            match field.field_type() {
+                Type::Primitive(actual_type) => {
+                    if actual_type != expected_type {
+                        return Err(format!(
+                            "Partition column '{}' type mismatch: specified {:?} but schema has {:?}",
+                            name, expected_type, actual_type
+                        ));
+                    }
+                }
+                other => {
+                    return Err(format!(
+                        "Partition column '{}' must be a primitive type, got {:?}",
+                        name, other
+                    ));
+                }
+            }
 
             Ok(PartitionField::new(
                 1000 + idx as i32, // field_id
-                source_id,         // source_id
+                field.id(),        // source_id
                 "identity",        // transform
                 name.clone(),      // name
             ))
@@ -258,20 +292,38 @@ fn build_partition_spec(spec_str: &str, schema: &Schema) -> Result<PartitionSpec
     Ok(PartitionSpec::new(0, fields))
 }
 
-/// Check if two schemas are compatible for registration
-fn schemas_compatible(expected: &Schema, actual: &Schema) -> bool {
-    // Simple check: same number of fields with same names and types
+/// Check if two schemas are compatible for registration.
+/// Returns Ok(()) if compatible, or Err with details about the mismatch.
+pub fn check_schema_compatibility(expected: &Schema, actual: &Schema) -> Result<(), String> {
+    // Check field count
     if expected.fields().len() != actual.fields().len() {
-        return false;
+        return Err(format!(
+            "field count mismatch: expected {} fields, got {}",
+            expected.fields().len(),
+            actual.fields().len()
+        ));
     }
 
+    // Check each field
     for (e, a) in expected.fields().iter().zip(actual.fields().iter()) {
-        if e.name() != a.name() || e.field_type() != a.field_type() {
-            return false;
+        if e.name() != a.name() {
+            return Err(format!(
+                "field name mismatch at position: expected '{}', got '{}'",
+                e.name(),
+                a.name()
+            ));
+        }
+        if e.field_type() != a.field_type() {
+            return Err(format!(
+                "field '{}' type mismatch: expected {:?}, got {:?}",
+                e.name(),
+                e.field_type(),
+                a.field_type()
+            ));
         }
     }
 
-    true
+    Ok(())
 }
 
 /// Determine partition values for a file
@@ -331,43 +383,29 @@ pub async fn execute(
     config: &CatalogConfig,
     format: OutputFormat,
 ) -> Result<(), String> {
-    // 1. Expand glob pattern
     let files = expand_glob(&args.pattern)?;
     println!("Found {} Parquet files", files.len());
 
-    // 2. Create catalog connection
     let catalog = config.create_catalog().await?;
     let file_io = catalog.file_io();
-
-    // 3. Determine exemplar file (first file or explicit)
     let exemplar_path = args.exemplar.as_ref().unwrap_or(&files[0]);
-
-    // 4. Introspect exemplar to get schema
     let exemplar = introspect_parquet_file(file_io, exemplar_path, None)
         .await
         .map_err(|e| format!("Failed to read exemplar file {}: {}", exemplar_path, e))?;
-
     let schema = exemplar.schema.clone();
     println!("Schema from: {}", exemplar_path);
 
-    // 5. Parse partition spec if creating
-    let partition_spec = if let Some(spec_str) = &args.partition {
-        if !args.create {
-            return Err("--partition requires --create flag".to_string());
-        }
-        Some(build_partition_spec(spec_str, &schema)?)
-    } else {
-        None
-    };
+    let partition_spec = args
+        .partition
+        .as_ref()
+        .map(|s| build_partition_spec(s, &schema))
+        .transpose()?;
+    let explicit_partition_values = args
+        .partition_values
+        .as_ref()
+        .map(|pv| parse_partition_values_arg(pv))
+        .transpose()?;
 
-    // 6. Parse explicit partition values if provided
-    let explicit_partition_values = if let Some(pv) = &args.partition_values {
-        Some(parse_partition_values_arg(pv)?)
-    } else {
-        None
-    };
-
-    // 7. Check if table exists
     if args.namespace.is_empty() {
         return Err("Namespace cannot be empty".to_string());
     }
@@ -377,7 +415,10 @@ pub async fn execute(
     let namespace = NamespaceIdent::from_strs(&[args.namespace.as_str()]);
     let table_ident = TableIdent::from_strs(&[args.namespace.as_str()], &args.table);
 
-    let table_exists = catalog.load_table(&table_ident).await.is_ok();
+    let table_exists = catalog
+        .table_exists(&table_ident)
+        .await
+        .map_err(|e| format!("Failed to check if table exists: {}", e))?;
 
     if !table_exists && !args.create {
         return Err(format!(
@@ -386,7 +427,6 @@ pub async fn execute(
         ));
     }
 
-    // 8. Introspect all files and build commit plan
     let mut data_files: Vec<DataFileInput> = Vec::new();
     let mut schema_mismatches = Vec::new();
     let mut partition_summaries: HashMap<String, (usize, i64)> = HashMap::new();
@@ -398,16 +438,14 @@ pub async fn execute(
             .await
             .map_err(|e| format!("Failed to read {}: {}", file_path, e))?;
 
-        // Validate schema matches exemplar
-        if !schemas_compatible(&schema, &introspection.schema) {
+        if let Err(mismatch_reason) = check_schema_compatibility(&schema, &introspection.schema) {
             schema_mismatches.push(SchemaMismatch {
                 file_path: file_path.clone(),
-                reason: "Schema does not match exemplar".to_string(),
+                reason: mismatch_reason,
             });
             continue;
         }
 
-        // Determine partition values
         let partition_values = determine_partition_values(
             file_path,
             &explicit_partition_values,
@@ -415,7 +453,6 @@ pub async fn execute(
             &schema,
         )?;
 
-        // Track partition summary
         let partition_key = format_partition_key(&partition_values);
         let entry = partition_summaries.entry(partition_key).or_insert((0, 0));
         entry.0 += 1;
@@ -436,7 +473,6 @@ pub async fn execute(
         ));
     }
 
-    // 9. Build partition summaries for output
     let partitions: Vec<PartitionSummary> = partition_summaries
         .into_iter()
         .map(|(k, (count, rows))| PartitionSummary {
@@ -450,7 +486,6 @@ pub async fn execute(
         })
         .collect();
 
-    // 10. Dry run - show plan and exit
     if args.dry_run {
         let plan = CommitPlanOutput {
             schema_source: exemplar_path.clone(),
@@ -465,13 +500,11 @@ pub async fn execute(
             total_bytes,
             partitions,
             schema_mismatches,
-            already_committed: 0,
         };
         print(&plan, format);
         return Ok(());
     }
 
-    // 11. Execute registration
     let options = if args.create && !table_exists {
         let mut opts = RegisterOptions::new().allow_create_with_schema(schema.clone());
         if let Some(spec) = partition_spec {
@@ -503,28 +536,4 @@ pub async fn execute(
 
     print(&output, format);
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_partition_spec() {
-        let spec = "year:int,month:int";
-        let result = parse_partition_spec(spec).unwrap();
-
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0], ("year".to_string(), "int".to_string()));
-        assert_eq!(result[1], ("month".to_string(), "int".to_string()));
-    }
-
-    #[test]
-    fn test_parse_partition_values() {
-        let values = "year=2024,month=01";
-        let result = parse_partition_values_arg(values).unwrap();
-
-        assert_eq!(result.get("year"), Some(&"2024".to_string()));
-        assert_eq!(result.get("month"), Some(&"01".to_string()));
-    }
 }

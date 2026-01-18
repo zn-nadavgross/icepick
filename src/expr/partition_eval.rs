@@ -153,8 +153,12 @@ fn project_predicate_impl(
                         };
 
                         if can_push {
+                            // partition_field_id comes from Iceberg metadata and should be valid
+                            // If it's invalid, this indicates corrupted metadata
+                            let column = ColumnRef::id(pm.partition_field_id)
+                                .expect("partition field ID from metadata should be positive");
                             return Predicate::Comparison {
-                                column: ColumnRef::Id(pm.partition_field_id),
+                                column,
                                 op: *op,
                                 value: transformed_value,
                             };
@@ -170,7 +174,9 @@ fn project_predicate_impl(
             if let Some(field_id) = resolve_column_id(column, schema) {
                 if let Some(pm) = mapping.iter().find(|m| m.source_id == field_id) {
                     // IS NULL can always be pushed to partition
-                    return Predicate::IsNull(ColumnRef::Id(pm.partition_field_id));
+                    let col = ColumnRef::id(pm.partition_field_id)
+                        .expect("partition field ID from metadata should be positive");
+                    return Predicate::IsNull(col);
                 }
             }
             Predicate::AlwaysTrue
@@ -179,7 +185,9 @@ fn project_predicate_impl(
         Predicate::IsNotNull(column) => {
             if let Some(field_id) = resolve_column_id(column, schema) {
                 if let Some(pm) = mapping.iter().find(|m| m.source_id == field_id) {
-                    return Predicate::IsNotNull(ColumnRef::Id(pm.partition_field_id));
+                    let col = ColumnRef::id(pm.partition_field_id)
+                        .expect("partition field ID from metadata should be positive");
+                    return Predicate::IsNotNull(col);
                 }
             }
             Predicate::AlwaysTrue
@@ -190,8 +198,10 @@ fn project_predicate_impl(
                 if let Some(pm) = mapping.iter().find(|m| m.source_id == field_id) {
                     // Only identity transform supports IN pushdown reliably
                     if pm.transform == Transform::Identity {
+                        let col = ColumnRef::id(pm.partition_field_id)
+                            .expect("partition field ID from metadata should be positive");
                         return Predicate::In {
-                            column: ColumnRef::Id(pm.partition_field_id),
+                            column: col,
                             values: values.clone(),
                         };
                     }

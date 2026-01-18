@@ -208,14 +208,61 @@ pub enum ColumnRef {
 }
 
 impl ColumnRef {
-    /// Create a named column reference
-    pub fn named(name: impl Into<String>) -> Self {
-        ColumnRef::Named(name.into())
+    /// Create a named column reference with validation
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::InvalidInput` if the name is empty.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use icepick::expr::ColumnRef;
+    ///
+    /// let col = ColumnRef::named("age").unwrap();
+    /// assert_eq!(col.name(), Some("age"));
+    ///
+    /// let empty = ColumnRef::named("");
+    /// assert!(empty.is_err());
+    /// ```
+    pub fn named(name: impl Into<String>) -> crate::error::Result<Self> {
+        let name_str = name.into();
+        if name_str.is_empty() {
+            return Err(crate::error::Error::invalid_input(
+                "Column name cannot be empty",
+            ));
+        }
+        Ok(ColumnRef::Named(name_str))
     }
 
-    /// Create a column reference by ID
-    pub fn id(id: i32) -> Self {
-        ColumnRef::Id(id)
+    /// Create a column reference by field ID with validation
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::InvalidInput` if the ID is not positive (must be > 0).
+    /// Field IDs in the Iceberg spec must be positive integers.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use icepick::expr::ColumnRef;
+    ///
+    /// let col = ColumnRef::id(42).unwrap();
+    ///
+    /// let negative = ColumnRef::id(-1);
+    /// assert!(negative.is_err());
+    ///
+    /// let zero = ColumnRef::id(0);
+    /// assert!(zero.is_err());
+    /// ```
+    pub fn id(id: i32) -> crate::error::Result<Self> {
+        if id <= 0 {
+            return Err(crate::error::Error::invalid_input(format!(
+                "Field ID must be positive, got {}",
+                id
+            )));
+        }
+        Ok(ColumnRef::Id(id))
     }
 
     /// Get the column name if this is a named reference
@@ -237,16 +284,36 @@ impl fmt::Display for ColumnRef {
 }
 
 impl From<String> for ColumnRef {
+    /// Convert a String to a ColumnRef::Named variant
+    ///
+    /// # Panics
+    ///
+    /// This conversion does not validate the input. Empty strings will create
+    /// invalid column references. Use `ColumnRef::named()` for validated construction.
     fn from(v: String) -> Self {
         ColumnRef::Named(v)
     }
 }
+
 impl From<&str> for ColumnRef {
+    /// Convert a string slice to a ColumnRef::Named variant
+    ///
+    /// # Panics
+    ///
+    /// This conversion does not validate the input. Empty strings will create
+    /// invalid column references. Use `ColumnRef::named()` for validated construction.
     fn from(v: &str) -> Self {
         ColumnRef::Named(v.to_string())
     }
 }
+
 impl From<i32> for ColumnRef {
+    /// Convert an i32 to a ColumnRef::Id variant
+    ///
+    /// # Panics
+    ///
+    /// This conversion does not validate the input. Non-positive IDs will create
+    /// invalid column references. Use `ColumnRef::id()` for validated construction.
     fn from(v: i32) -> Self {
         ColumnRef::Id(v)
     }
@@ -521,5 +588,69 @@ mod tests {
         ]);
         let cols = p.columns();
         assert_eq!(cols.len(), 3);
+    }
+
+    #[test]
+    fn test_column_ref_named_validation() {
+        // Valid name should succeed
+        let col = ColumnRef::named("age");
+        assert!(col.is_ok());
+        assert_eq!(col.unwrap().name(), Some("age"));
+
+        // Empty string should fail
+        let empty = ColumnRef::named("");
+        assert!(empty.is_err());
+        assert!(empty
+            .unwrap_err()
+            .to_string()
+            .contains("Column name cannot be empty"));
+
+        // Empty String should also fail
+        let empty_string = ColumnRef::named(String::new());
+        assert!(empty_string.is_err());
+    }
+
+    #[test]
+    fn test_column_ref_id_validation() {
+        // Valid positive ID should succeed
+        let col = ColumnRef::id(1);
+        assert!(col.is_ok());
+        assert!(matches!(col.unwrap(), ColumnRef::Id(1)));
+
+        let col42 = ColumnRef::id(42);
+        assert!(col42.is_ok());
+        assert!(matches!(col42.unwrap(), ColumnRef::Id(42)));
+
+        // Zero should fail
+        let zero = ColumnRef::id(0);
+        assert!(zero.is_err());
+        assert!(zero.unwrap_err().to_string().contains("must be positive"));
+
+        // Negative IDs should fail
+        let negative = ColumnRef::id(-1);
+        assert!(negative.is_err());
+        assert!(negative.unwrap_err().to_string().contains("must be positive"));
+
+        let very_negative = ColumnRef::id(-999);
+        assert!(very_negative.is_err());
+        assert!(very_negative
+            .unwrap_err()
+            .to_string()
+            .contains("must be positive"));
+    }
+
+    #[test]
+    fn test_column_ref_from_impls_no_validation() {
+        // From impls should still work but don't validate
+        // These document the unsafe behavior
+
+        // String conversion - allows empty (but creates invalid ref)
+        let _col_from_str: ColumnRef = "valid_name".into();
+        let _empty_from_str: ColumnRef = "".into(); // Invalid but allowed
+
+        // i32 conversion - allows negative (but creates invalid ref)
+        let _col_from_i32: ColumnRef = 42.into();
+        let _negative_from_i32: ColumnRef = (-1).into(); // Invalid but allowed
+        let _zero_from_i32: ColumnRef = 0.into(); // Invalid but allowed
     }
 }

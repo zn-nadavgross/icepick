@@ -254,16 +254,25 @@ fn transform_value_for_partition(value: &Datum, transform: Transform) -> Option<
         Transform::Month => match value {
             Datum::Date(days) => {
                 let (year, month) = days_to_year_month(*days);
-                Some(Datum::Int(year * 12 + month - 1))
+                // Use checked arithmetic to prevent overflow for extreme year values
+                year.checked_mul(12)
+                    .and_then(|v| v.checked_add(month - 1))
+                    .map(Datum::Int)
             }
             Datum::Timestamp(micros) => {
                 let days = (*micros / 86_400_000_000) as i32;
                 let (year, month) = days_to_year_month(days);
-                Some(Datum::Int(year * 12 + month - 1))
+                // Use checked arithmetic to prevent overflow for extreme year values
+                year.checked_mul(12)
+                    .and_then(|v| v.checked_add(month - 1))
+                    .map(Datum::Int)
             }
-            Datum::String(s) => {
-                parse_date_year_month(s).map(|(year, month)| Datum::Int(year * 12 + month - 1))
-            }
+            Datum::String(s) => parse_date_year_month(s).and_then(|(year, month)| {
+                // Use checked arithmetic to prevent overflow for extreme year values
+                year.checked_mul(12)
+                    .and_then(|v| v.checked_add(month - 1))
+                    .map(Datum::Int)
+            }),
             _ => None,
         },
 

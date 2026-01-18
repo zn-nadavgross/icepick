@@ -17,6 +17,9 @@ pub struct CompactOptions {
 
     /// Show plan without executing
     pub dry_run: bool,
+
+    /// Allow partial failures - continue compacting other partitions if one fails (default: false)
+    pub allow_partial_failure: bool,
 }
 
 impl Default for CompactOptions {
@@ -27,6 +30,7 @@ impl Default for CompactOptions {
             min_files_per_group: 3,
             partition_filter: None,
             dry_run: false,
+            allow_partial_failure: false,
         }
     }
 }
@@ -64,6 +68,12 @@ impl CompactOptions {
     /// Enable dry run mode
     pub fn with_dry_run(mut self, dry_run: bool) -> Self {
         self.dry_run = dry_run;
+        self
+    }
+
+    /// Allow partial failures - continue compacting other partitions if one fails
+    pub fn with_allow_partial_failure(mut self, allow: bool) -> Self {
+        self.allow_partial_failure = allow;
         self
     }
 }

@@ -166,13 +166,19 @@ impl CompactionPlan {
 /// Extract partition value from file path (Hive-style partitioning)
 fn extract_partition_value(file_path: &str) -> Option<String> {
     // Look for patterns like /key=value/ in the path
-    // e.g., s3://bucket/table/data/dt=2024-01-15/file.parquet -> "dt=2024-01-15"
-    for segment in file_path.split('/') {
-        if segment.contains('=') && !segment.starts_with("s3://") && !segment.starts_with("http") {
-            return Some(segment.to_string());
-        }
+    // Supports multi-level partitions: /year=2024/month=01/ -> "year=2024/month=01"
+    let partitions: Vec<&str> = file_path
+        .split('/')
+        .filter(|segment| {
+            segment.contains('=') && !segment.starts_with("s3://") && !segment.starts_with("http")
+        })
+        .collect();
+
+    if partitions.is_empty() {
+        None
+    } else {
+        Some(partitions.join("/"))
     }
-    None
 }
 
 /// Greedy bin-packing algorithm (first-fit decreasing)
@@ -221,17 +227,30 @@ mod tests {
 
     #[test]
     fn test_extract_partition_value() {
+        // Single partition
         assert_eq!(
             extract_partition_value("s3://bucket/table/data/dt=2024-01-15/file.parquet"),
             Some("dt=2024-01-15".to_string())
         );
+
+        // No partition
         assert_eq!(
             extract_partition_value("s3://bucket/table/data/file.parquet"),
             None
         );
+
+        // Multi-level partitions - should return all partition keys
         assert_eq!(
             extract_partition_value("s3://bucket/table/data/year=2024/month=01/file.parquet"),
-            Some("year=2024".to_string()) // Returns first partition
+            Some("year=2024/month=01".to_string())
+        );
+
+        // Three-level partitions
+        assert_eq!(
+            extract_partition_value(
+                "s3://bucket/table/data/year=2024/month=01/day=15/file.parquet"
+            ),
+            Some("year=2024/month=01/day=15".to_string())
         );
     }
 

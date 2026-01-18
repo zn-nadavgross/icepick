@@ -92,6 +92,25 @@ pub async fn execute_compaction(
         }
     }
 
+    // Check if we should fail on partial failures
+    if result.partitions_failed > 0 && !options.allow_partial_failure {
+        return Err(Error::InvalidInput(format!(
+            "Compaction failed on {} of {} partitions. Use --allow-partial-failure to continue on errors.\n\nErrors:\n{}",
+            result.partitions_failed,
+            plan.partition_count(),
+            result
+                .errors
+                .iter()
+                .map(|e| format!(
+                    "  - {}: {}",
+                    e.partition.as_deref().unwrap_or("(unpartitioned)"),
+                    e.error
+                ))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )));
+    }
+
     Ok(result)
 }
 
@@ -164,7 +183,11 @@ async fn compact_group(
     }
 
     if all_batches.is_empty() {
-        return Ok((Vec::new(), group.input_bytes, 0, 0));
+        return Err(Error::InvalidInput(format!(
+            "Compaction group produced no data from {} input files (total {} bytes). All files may be empty or failed to read.",
+            group.input_files.len(),
+            group.input_bytes
+        )));
     }
 
     // Get the schema from the first batch

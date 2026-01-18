@@ -180,3 +180,21 @@ fn malformed_partition_value_errors() {
         "unexpected error: {err}"
     );
 }
+
+#[test]
+fn test_parse_hive_partition_values_standalone() {
+    let path = "s3://bucket/year=2024/month=01/data.parquet";
+    let result = super::parse_hive_partition_values(path);
+
+    assert_eq!(result.get("year"), Some(&"2024".to_string()));
+    assert_eq!(result.get("month"), Some(&"01".to_string()));
+    assert_eq!(result.len(), 2);
+}
+
+#[test]
+fn test_parse_hive_partition_values_no_partitions() {
+    let path = "s3://bucket/data/file.parquet";
+    let result = super::parse_hive_partition_values(path);
+
+    assert!(result.is_empty());
+}

@@ -15,7 +15,8 @@ use chrono::Utc;
 use validate::validate_schema;
 
 pub use introspect::{
-    infer_partition_values_from_path, introspect_parquet_file, ParquetIntrospection,
+    infer_partition_values_from_path, introspect_parquet_file, parse_hive_partition_values,
+    ParquetIntrospection,
 };
 pub use types::{
     DataFileFormat, DataFileInput, DataFileRegistrar, EncryptionMetadata, FileMetrics,

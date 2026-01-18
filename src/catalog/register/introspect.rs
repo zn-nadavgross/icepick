@@ -169,7 +169,18 @@ pub fn infer_partition_values_from_path(
 }
 
 /// Extract Hive-style `key=value` segments from a path.
-fn parse_hive_partition_values(path: &str) -> HashMap<String, String> {
+///
+/// Returns a map of partition column names to their string values.
+/// Does not validate against any schema or partition spec.
+///
+/// # Example
+/// ```
+/// use icepick::catalog::register::parse_hive_partition_values;
+///
+/// let values = parse_hive_partition_values("s3://bucket/year=2024/month=01/file.parquet");
+/// assert_eq!(values.get("year"), Some(&"2024".to_string()));
+/// ```
+pub fn parse_hive_partition_values(path: &str) -> HashMap<String, String> {
     path.rsplit_once('/')
         .map(|(dirs, file)| (dirs, Some(file)))
         .unwrap_or((path, None))

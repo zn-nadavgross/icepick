@@ -1,6 +1,6 @@
 [package]
 name = "icepick"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 authors = ["Clay Smith"]
 description = "Experimental Rust client for Apache Iceberg with WASM support for AWS S3 Tables and Cloudflare R2"
@@ -12,6 +12,14 @@ readme = "README.md"
 keywords = ["iceberg", "parquet", "data", "s3", "wasm"]
 categories = ["database", "web-programming"]
 
+[[bin]]
+name = "icepick"
+path = "src/bin/icepick.rs"
+required-features = ["cli"]
+
+[features]
+cli = []
+
 [dependencies]
 # HTTP and serialization
 http = "1.0"
@@ -20,6 +28,8 @@ serde_json = "1.0"
 async-trait = "0.1"
 thiserror = "2.0"
 percent-encoding = "2.3"
+url = "2.5"
+urlencoding = "2.1"
 uuid = { version = "1.0", features = ["v4", "serde", "js"] }
 opendal = { version = "0.54", default-features = false, features = ["services-memory", "services-s3"] }
 apache-avro = "0.21"
@@ -33,12 +43,19 @@ chrono = { version = "0.4.42", features = ["serde"] }
 
 # Non-WASM targets (native platforms)
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# Note: We use default-features to ensure proxy support works in all environments
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 aws-sigv4 = { version = "1.3.6", default-features = false, features = ["sign-http"] }
 aws-credential-types = { version = "1.2", default-features = false }
 aws-config = { version = "1.8", default-features = false, features = ["rustls", "behavior-version-latest", "rt-tokio"] }
 aws-sdk-sts = { version = "1.55", default-features = false, features = ["rustls", "rt-tokio"] }
-tokio = { version = "1.48.0", default-features = false, features = ["time"] }
+tokio = { version = "1.48.0", default-features = false, features = ["time", "rt-multi-thread", "macros"] }
+# CLI dependencies
+clap = { version = "4", features = ["derive", "env"] }
+comfy-table = "7"
+bytesize = "1"
+humantime = "2"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 
 # WASM targets
 [target.'cfg(target_family = "wasm")'.dependencies]

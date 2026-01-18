@@ -4,6 +4,7 @@ mod catalog_impl;
 mod catalog_trait;
 mod client;
 pub mod commit_types;
+mod credentials;
 mod helpers;
 mod types;
 

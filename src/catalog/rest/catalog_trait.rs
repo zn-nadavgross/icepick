@@ -26,6 +26,10 @@ impl crate::catalog::Catalog for IcebergRestCatalog {
         self.namespace_exists_impl(namespace).await
     }
 
+    async fn list_namespaces(&self) -> crate::error::Result<Vec<crate::spec::NamespaceIdent>> {
+        self.list_namespaces_impl().await
+    }
+
     async fn list_tables(
         &self,
         namespace: &crate::spec::NamespaceIdent,

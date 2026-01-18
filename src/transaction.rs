@@ -7,7 +7,15 @@ use crate::table::Table;
 #[derive(Debug, Clone)]
 pub enum TransactionOperation {
     /// Append data files
-    Append(#[allow(dead_code)] Vec<DataFile>),
+    Append(Vec<DataFile>),
+    /// Rewrite files: atomically delete old files and add new ones.
+    /// Used for compaction, where we replace N small files with M larger files.
+    Rewrite {
+        /// Files to be deleted (marked as deleted in manifest)
+        files_to_delete: Vec<DataFile>,
+        /// New files to add (marked as added in manifest)
+        files_to_add: Vec<DataFile>,
+    },
 }
 
 /// A transaction for modifying a table
@@ -37,13 +45,22 @@ impl Transaction {
         self
     }
 
+    /// Rewrite files: atomically delete old files and add new ones.
+    /// Used for compaction, where we replace N small files with M larger files.
+    pub fn rewrite(mut self, files_to_delete: Vec<DataFile>, files_to_add: Vec<DataFile>) -> Self {
+        self.operations.push(TransactionOperation::Rewrite {
+            files_to_delete,
+            files_to_add,
+        });
+        self
+    }
+
     /// Check if transaction has any operations
     pub fn has_operations(&self) -> bool {
         !self.operations.is_empty()
     }
 
     /// Get the operations (for internal use)
-    #[allow(dead_code)]
     pub(crate) fn operations(&self) -> &[TransactionOperation] {
         &self.operations
     }

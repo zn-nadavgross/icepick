@@ -4,6 +4,8 @@
 
 **icepick** is an experimental Rust client for Apache Iceberg that provides simple, production-ready access to cloud-native Iceberg catalogs (AWS S3 Tables and Cloudflare R2). Unlike the official iceberg-rust library, icepick targets WASM compilation for serverless environments and focuses on REST catalog implementations with minimal configuration. The library abstracts authentication, catalog REST APIs, and file I/O while exposing a clean, type-safe interface for reading and writing Iceberg tables.
 
+Key capabilities include a CLI for table maintenance operations, bin-pack compaction, partition pruning with predicate pushdown, and vended credential caching for REST catalogs.
+
 ## QUICK START
 
 ```toml
@@ -60,6 +62,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+### CLI (native only)
+
+```bash
+# Install with CLI feature
+cargo install icepick --features cli
+
+# Set catalog credentials
+export ICEPICK_CATALOG_URL="https://catalog.cloudflarestorage.com/account/bucket"
+export ICEPICK_TOKEN="your-api-token"
+
+# List namespaces and tables
+icepick namespace list
+icepick table list --namespace my_namespace
+icepick table info my_namespace.my_table
+
+# Scan with filter (shows pruning stats)
+icepick table scan my_namespace.my_table --filter "date >= '2024-01-01'"
+
+# Compact small files (dry run first)
+icepick compact my_namespace.my_table --dry-run
+icepick compact my_namespace.my_table --target-size 268435456
+```
+
 ## CORE CONCEPTS
 
 - **REST Catalog Pattern**: All catalog operations use REST API calls with platform-specific authentication (SigV4 for AWS, bearer tokens for Cloudflare)
@@ -74,12 +99,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 Module Structure:
 ├── catalog/          # Catalog implementations (S3TablesCatalog, R2Catalog)
 │   ├── auth/        # Authentication (SigV4, bearer tokens)
-│   ├── rest/        # REST catalog protocol
+│   ├── rest/        # REST catalog protocol with vended credential caching
 │   └── register/    # Register existing Parquet files without rewriting
+├── cli/             # CLI commands (native only, behind "cli" feature)
+│   └── commands/    # catalog, namespace, table, compact subcommands
+├── compact/         # Bin-pack compaction for small files
+├── expr/            # Predicate expressions for partition pruning
 ├── spec/            # Iceberg specification types (Schema, TableIdent, etc.)
 ├── table/           # Table representation and operations
 ├── transaction/     # Write operations with ACID guarantees
-├── scan/            # Table scanning and reading
+├── scan/            # Table scanning with predicate-based filtering
 ├── io/              # FileIO abstraction over OpenDAL
 ├── writer/          # Parquet writing (both Iceberg and standalone)
 ├── reader/          # Manifest and data file reading
@@ -91,13 +120,18 @@ Module Structure:
 
 1. **S3TablesCatalog::from_arn()** - Create AWS S3 Tables catalog
 2. **R2Catalog::new()** - Create Cloudflare R2 catalog
-3. **Catalog trait** - Core operations (create_table, load_table, list_tables, drop_table)
+3. **Catalog trait** - Core operations (create_table, load_table, list_tables, list_namespaces, drop_table)
 4. **Table** - Iceberg table with scan() and transaction() methods
-5. **Transaction::append().commit()** - Append data files atomically
+5. **TableScanBuilder::filter()** - Add predicate for partition/bounds pruning
 6. **TableScan::to_arrow()** - Read table as Arrow RecordBatch stream
-7. **arrow_to_parquet()** - Write Arrow data directly to S3 without Iceberg metadata
-8. **register_data_files()** - Register existing Parquet files without rewriting data
-9. **introspect_parquet_file()** - Extract schema, row count, and metrics from Parquet footer
+7. **Transaction::append().commit()** - Append data files atomically
+8. **compact_table()** - Bin-pack compaction (merge small files into larger ones)
+9. **plan_compaction()** - Create compaction plan without executing
+10. **parse_filter()** - Parse string filter expression into Predicate
+11. **Predicate** - Filter expressions (eq, gt, lt, and, or) for partition pruning
+12. **arrow_to_parquet()** - Write Arrow data directly to S3 without Iceberg metadata
+13. **register_data_files()** - Register existing Parquet files without rewriting data
+14. **introspect_parquet_file()** - Extract schema, row count, and metrics from Parquet footer
 
 ## COMMON PATTERNS
 
@@ -234,17 +268,75 @@ let result = catalog.register_data_files(
 println!("Added {} files, {} records", result.added_files, result.added_records);
 ```
 
+### Pattern 6: Filtering with partition pruning
+
+```rust
+use icepick::expr::{Predicate, Datum, parse_filter};
+use futures::StreamExt;
+
+let table = catalog.load_table(&table_id).await?;
+
+// Option A: Build predicate programmatically
+let predicate = Predicate::and([
+    Predicate::gt_eq("date", Datum::Date(19724)), // 2024-01-01
+    Predicate::lt("date", Datum::Date(19755)),    // 2024-02-01
+    Predicate::eq("status", "active"),
+]);
+
+// Option B: Parse from string (useful for CLI/user input)
+let predicate = parse_filter("date >= '2024-01-01' AND status = 'active'")?;
+
+// Build scan with filter
+let scan = table.scan()
+    .filter(predicate)
+    .build()?;
+
+// Check pruning effectiveness
+let (filtered, total) = scan.file_count().await?;
+println!("Scanning {} of {} files", filtered, total);
+
+// Stream filtered results
+let mut stream = scan.to_arrow().await?;
+while let Some(batch) = stream.next().await {
+    let batch = batch?;
+    // Process batch
+}
+```
+
+### Pattern 7: Table compaction
+
+```rust
+use icepick::compact::{compact_table, plan_compaction, CompactOptions};
+
+let table = catalog.load_table(&table_id).await?;
+
+// Configure compaction options
+let options = CompactOptions::new()
+    .with_target_file_size(256 * 1024 * 1024)?  // 256 MB target
+    .with_max_input_file_size(128 * 1024 * 1024)? // Only compact files < 128 MB
+    .with_min_files_per_group(3)?;  // Need at least 3 files to compact
+
+// Option A: Dry run - see what would happen
+let plan = plan_compaction(&table, &options).await?;
+println!("Would compact {} partitions, {} files",
+    plan.partition_count(), plan.total_input_files());
+
+// Option B: Execute compaction
+let result = compact_table(&table, &catalog, &options).await?;
+println!("Compacted {} files into {}", result.files_removed, result.files_added);
+```
+
 ## INTEGRATION POINTS
 
 - **Async Runtime**: tokio (required for examples/tests, not enforced as dependency)
 - **Serialization**: serde with JSON for REST API, apache-avro for manifest files
-- **Arrow/Parquet**: Uses arrow 55.2.0 and parquet 55.2.0 crates directly
-- **Storage Backend**: OpenDAL 0.51 with services-s3 and services-memory features
+- **Arrow/Parquet**: Uses arrow 56.2.0 and parquet 56.2.0 crates directly
+- **Storage Backend**: OpenDAL 0.54 with services-s3 and services-memory features
 - **Authentication**:
   - Native: aws-config, aws-sdk-sts, aws-sigv4, reqwest with rustls-tls
   - WASM: reqwest with JSON (no TLS features)
-- **Key Feature Flags**: None (platform selection via cfg(target_family = "wasm"))
-- **Critical Dependencies**: opendal (storage abstraction), async-trait (catalog trait), thiserror (error types)
+- **Key Feature Flags**: `cli` (enables the icepick binary); platform selection via cfg(target_family = "wasm")
+- **Critical Dependencies**: opendal (storage abstraction), async-trait (catalog trait), thiserror (error types), clap (CLI parsing)
 
 ## CONSTRAINTS & GOTCHAS
 
@@ -255,8 +347,9 @@ println!("Added {} files, {} records", result.added_files, result.added_records)
   - Some error variants (e.g., `Error::InvalidArn`) only exist on native platforms
 - **Performance cliffs**:
   - `arrow_to_parquet()` buffers entire Parquet file in memory before upload
-  - Table scans read all data files sequentially (no filtering/projection yet)
+  - Table scans with predicates prune by partition and column stats, but still read full files (no row-level filtering)
   - No connection pooling for REST catalog calls
+  - Compaction loads all files in a group into memory (limit with `max_compaction_group_bytes`)
 - **Common misuse patterns**:
   - Don't call `table.files()` in a loop - cache the table metadata
   - Don't create new catalog instances per request - reuse them
@@ -368,6 +461,9 @@ When working with this library:
 3. Run `cargo clippy -- -D warnings` before suggesting changes
 4. For architecture decisions, this is a thin wrapper over Iceberg REST protocol - prioritize simplicity over feature completeness
 5. Error pattern: All errors implement Display with context - use `?` operator and let errors propagate
+6. Use predicates for scan filtering: `table.scan().filter(predicate).build()?`
+7. Compaction is available via `compact_table()` or `plan_compaction()` + `execute_compaction()`
+8. CLI is behind the `cli` feature flag (native only)
 
 ### Key Invariants to Maintain
 
@@ -383,6 +479,9 @@ When working with this library:
 - Include proper error handling (don't unwrap on I/O operations)
 - Use `#[tokio::main]` or equivalent async runtime in examples
 - Add field IDs to Iceberg schemas (required for Parquet field mapping)
+- Use `parse_filter()` for user-provided filter strings; use `Predicate::*` for programmatic filters
+- Call `plan_compaction()` with `dry_run` first to preview changes before `compact_table()`
+- Use `CompactOptions::with_*()` builder pattern (methods return `Result`)
 
 **Never:**
 - Construct `Table` directly (use catalog methods)
@@ -390,18 +489,24 @@ When working with this library:
 - Mix S3TablesCatalog with WASM targets
 - Assume tables have snapshots (check with `current_snapshot()`)
 - Hardcode credentials in examples (use env vars or function parameters)
+- Run compaction without checking `plan.is_empty()` first
+- Use CLI features in WASM builds (cli module is `#[cfg(not(target_family = "wasm"))]`)
 
 ## PERFORMANCE PROFILE
 
 | Operation | Complexity | Notes |
 |-----------|-----------|-------|
 | `catalog.load_table()` | O(1) | Single REST API call + metadata JSON parse |
+| `catalog.list_namespaces()` | O(1) | Single REST API call |
 | `table.files()` | O(m) | Reads manifest list + m manifest files (Avro) |
-| `table.scan().to_arrow()` | O(n) | Sequential read of n data files, no parallelism yet |
+| `table.scan().filter().to_arrow()` | O(k) | Reads k files after partition/bounds pruning (k ≤ n) |
+| `scan.file_count()` | O(m) | Count files without reading data (for pruning stats) |
 | `transaction.commit()` | O(m) | Write new manifest files + update metadata (atomic CAS) |
+| `plan_compaction()` | O(m) | Reads manifests and groups small files |
+| `execute_compaction()` | O(g×f) | Reads/writes g groups × f files per group |
 | `arrow_to_parquet()` | O(n) | Full buffer in memory before upload |
 
-Where m = number of manifest files, n = number of data files
+Where m = number of manifest files, n = number of data files, k = files after pruning
 
 ## COMPARISON MATRIX
 
@@ -413,8 +518,10 @@ Where m = number of manifest files, n = number of data files
 | Dependencies | Lightweight | Heavy (full AWS SDK) |
 | Maturity | Experimental | Production (Apache) |
 | Transaction API | Simplified (append only) | Full (delete, overwrite, etc.) |
-| Query Optimization | None yet | Predicate pushdown, projection |
+| Query Optimization | Partition/bounds pruning | Predicate pushdown, projection |
+| Compaction | ✅ Bin-pack | ✅ Multiple strategies |
+| CLI Tool | ✅ icepick binary | ❌ |
 
-**When to use icepick**: WASM deployment, serverless environments (Cloudflare Workers), simpler API for append-only workloads, R2 Data Catalog support
+**When to use icepick**: WASM deployment, serverless environments (Cloudflare Workers), simpler API for append-only workloads, R2 Data Catalog support, CLI-based table maintenance
 
 **When to use iceberg-rust**: Full Iceberg feature support, non-REST catalogs (Glue, Hive, etc.), complex query patterns, production-critical workloads

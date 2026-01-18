@@ -31,7 +31,7 @@ repos:
 
       - id: rust-quality-thresholds
         name: Rust code quality thresholds
-        entry: python3 scripts/enforce_quality.py
+        entry: python3 scripts/enforce_quality.py --max-loc 550
         language: system
         pass_filenames: false
         stages: [pre-commit, pre-push]

@@ -2,9 +2,9 @@
 
 use crate::error::Result;
 use crate::io::FileIO;
-use crate::reader::{DataFileEntry, ManifestListReader, ManifestReader};
+use crate::reader::{DataFileEntry, DataFileStats, ManifestListReader, ManifestReader};
 use crate::scan::TableScanBuilder;
-use crate::spec::{Schema, Snapshot, TableIdent, TableMetadata};
+use crate::spec::{PartitionField, PartitionSpec, Schema, Snapshot, TableIdent, TableMetadata};
 use crate::transaction::Transaction;
 
 /// An Iceberg table with integrated storage
@@ -13,7 +13,6 @@ pub struct Table {
     identifier: TableIdent,
     metadata: TableMetadata,
     metadata_location: String,
-    #[allow(dead_code)]
     file_io: FileIO,
 }
 
@@ -103,6 +102,43 @@ impl Table {
     /// For the MVP, this provides basic sequential reading without filtering.
     pub fn scan(&self) -> TableScanBuilder<'_> {
         TableScanBuilder::new(self)
+    }
+
+    /// List all data files with statistics for partition/bounds pruning
+    ///
+    /// Returns files with partition values and column bounds needed for filtering.
+    pub async fn files_with_stats(&self) -> Result<Vec<DataFileStats>> {
+        // Get current snapshot
+        let snapshot = self
+            .current_snapshot()
+            .ok_or_else(|| crate::error::Error::invalid_input("Table has no current snapshot"))?;
+
+        // Read manifest list to get manifest file paths
+        let manifest_paths =
+            ManifestListReader::read(&self.file_io, snapshot.manifest_list()).await?;
+
+        // Read each manifest and collect data files with stats
+        let mut all_files = Vec::new();
+        for manifest_path in manifest_paths {
+            let files = ManifestReader::read_with_stats(&self.file_io, &manifest_path).await?;
+            all_files.extend(files);
+        }
+
+        Ok(all_files)
+    }
+
+    /// Get the current partition spec
+    ///
+    /// Returns the first partition spec, or a default unpartitioned spec if none.
+    pub fn current_partition_spec(&self) -> Option<&PartitionSpec> {
+        self.metadata.partition_specs().first()
+    }
+
+    /// Get partition fields from the current spec
+    pub fn partition_fields(&self) -> &[PartitionField] {
+        self.current_partition_spec()
+            .map(|s| s.fields())
+            .unwrap_or(&[])
     }
 }
 

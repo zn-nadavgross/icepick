@@ -137,6 +137,10 @@ impl Catalog for S3TablesCatalog {
         self.inner.namespace_exists(namespace).await
     }
 
+    async fn list_namespaces(&self) -> Result<Vec<NamespaceIdent>> {
+        self.inner.list_namespaces().await
+    }
+
     async fn list_tables(&self, namespace: &NamespaceIdent) -> Result<Vec<TableIdent>> {
         self.inner.list_tables(namespace).await
     }

@@ -51,6 +51,12 @@ pub struct ListTablesResponse {
 
 #[derive(Deserialize)]
 #[allow(dead_code)]
+pub struct ListNamespacesResponse {
+    pub namespaces: Vec<Vec<String>>,
+}
+
+#[derive(Deserialize)]
+#[allow(dead_code)]
 pub struct TableIdentifier {
     pub namespace: Vec<String>,
     pub name: String,
@@ -72,4 +78,36 @@ pub struct ConfigResponse {
     pub defaults: HashMap<String, String>,
     #[serde(default)]
     pub overrides: HashMap<String, String>,
+}
+
+/// Response from the /credentials endpoint (vended credentials)
+#[derive(Deserialize, Debug, Clone)]
+pub struct LoadTableCredentialsResponse {
+    #[serde(rename = "storage-credentials")]
+    pub storage_credentials: Vec<StorageCredential>,
+}
+
+/// Individual storage credential from vended credentials response
+#[derive(Deserialize, Debug, Clone)]
+pub struct StorageCredential {
+    pub prefix: String,
+    pub config: StorageCredentialConfig,
+}
+
+/// Configuration within a storage credential
+#[derive(Deserialize, Debug, Clone)]
+pub struct StorageCredentialConfig {
+    #[serde(rename = "s3.access-key-id")]
+    pub access_key_id: Option<String>,
+    #[serde(rename = "s3.secret-access-key")]
+    pub secret_access_key: Option<String>,
+    #[serde(rename = "s3.session-token")]
+    pub session_token: Option<String>,
+    #[serde(rename = "s3.endpoint")]
+    pub endpoint: Option<String>,
+    #[serde(rename = "s3.region")]
+    pub region: Option<String>,
+    /// Credential expiration time in milliseconds since Unix epoch
+    #[serde(rename = "expires-at-ms")]
+    pub expires_at_ms: Option<i64>,
 }

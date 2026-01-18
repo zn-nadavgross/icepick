@@ -157,7 +157,7 @@ impl CompactionPlan {
             // Sort by size ascending for better bin-packing
             files.sort_by_key(|f| f.file_size_in_bytes());
 
-            // Greedy bin-packing (first-fit)
+            // Greedy bin-packing (first-fit with ascending size order)
             let groups = bin_pack_files(
                 files,
                 options.target_file_size(),

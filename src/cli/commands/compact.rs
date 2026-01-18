@@ -95,7 +95,7 @@ impl Outputable for CompactionPlanOutput {
             self.total_input_files, self.estimated_output_files, reduction
         ));
         lines.push(format!(
-            "  Bytes:   {} -> ~{}",
+            "  Bytes:   {} -> ~{} (compaction rewrites data)",
             format_bytes(self.total_input_bytes),
             format_bytes(self.total_input_bytes)
         ));

@@ -282,7 +282,18 @@ impl IcebergRestCatalog {
         let prefix = properties.get("prefix").cloned().unwrap_or_default();
 
         // Extract S3 endpoint from config if available (for R2, this comes from properties)
-        let s3_endpoint = properties.get("s3.endpoint").cloned();
+        // If not in config, derive from catalog URL for R2 (https://catalog.cloudflarestorage.com/{account_id}/...)
+        let s3_endpoint = properties.get("s3.endpoint").cloned().or_else(|| {
+            if endpoint.contains("cloudflarestorage.com") {
+                // Parse account_id from R2 catalog URL: https://catalog.cloudflarestorage.com/{account_id}/{bucket}
+                endpoint
+                    .strip_prefix("https://catalog.cloudflarestorage.com/")
+                    .and_then(|rest| rest.split('/').next())
+                    .map(|account_id| format!("https://{}.r2.cloudflarestorage.com", account_id))
+            } else {
+                None
+            }
+        });
 
         // Create credential provider for vended credentials
         let credential_provider = Arc::new(RestCredentialProvider {

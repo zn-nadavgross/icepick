@@ -274,10 +274,30 @@ impl VendedCredentialProvider for RestCredentialProvider {
         let creds_response = self.fetch_credentials(&namespace, &table_name).await?;
 
         // 5. Find matching credential for this path
+        // R2 may return "/" as the prefix meaning "all paths", so we need flexible matching
         let cred = creds_response
             .storage_credentials
             .iter()
-            .find(|c| path.starts_with(&c.prefix))
+            .find(|c| {
+                // "/" or empty prefix means "match all"
+                if c.prefix == "/" || c.prefix.is_empty() {
+                    return true;
+                }
+                // Try exact prefix match first
+                if path.starts_with(&c.prefix) {
+                    return true;
+                }
+                // Try matching just the path portion (after s3://bucket/)
+                if let Some(path_portion) = path
+                    .strip_prefix("s3://")
+                    .and_then(|p| p.find('/').map(|i| &p[i..]))
+                {
+                    if path_portion.starts_with(&c.prefix) {
+                        return true;
+                    }
+                }
+                false
+            })
             .ok_or_else(|| {
                 Error::IoError(format!(
                     "No matching credential prefix for path: {}. Available prefixes: {:?}",

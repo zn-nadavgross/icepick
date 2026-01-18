@@ -22,6 +22,13 @@ pub trait Catalog: Send + Sync {
     /// Check if a namespace exists
     async fn namespace_exists(&self, namespace: &NamespaceIdent) -> Result<bool>;
 
+    /// List all namespaces in the catalog
+    async fn list_namespaces(&self) -> Result<Vec<NamespaceIdent>> {
+        Err(crate::error::Error::invalid_input(
+            "list_namespaces not implemented for this catalog",
+        ))
+    }
+
     /// List all tables in a namespace
     async fn list_tables(&self, namespace: &NamespaceIdent) -> Result<Vec<TableIdent>>;
 

@@ -14,6 +14,12 @@ pub struct CompactOptions {
     /// Minimum files in a group to trigger compaction (default: 3)
     min_files_per_group: usize,
 
+    /// Maximum total bytes for a single compaction group (default: 512MB)
+    /// This limits memory usage during compaction since all files in a group
+    /// are loaded into memory. Note: Parquet decompression typically expands
+    /// data 2-5x, so a 512MB group may use 1-2GB of memory.
+    max_compaction_group_bytes: u64,
+
     /// Only compact specific partition (None = all partitions)
     partition_filter: Option<String>,
 
@@ -30,6 +36,7 @@ impl Default for CompactOptions {
             target_file_size: 256 * 1024 * 1024,    // 256 MB
             max_input_file_size: 128 * 1024 * 1024, // 128 MB
             min_files_per_group: 3,
+            max_compaction_group_bytes: 512 * 1024 * 1024, // 512 MB
             partition_filter: None,
             dry_run: false,
             allow_partial_failure: false,
@@ -142,6 +149,28 @@ impl CompactOptions {
         self
     }
 
+    /// Set maximum bytes for a single compaction group
+    ///
+    /// This limits memory usage during compaction since all files in a group
+    /// are loaded into memory before being written as a single output file.
+    ///
+    /// Note: Parquet decompression typically expands data 2-5x, so a 512MB
+    /// on-disk group may use 1-2GB of memory during compaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `bytes` is less than `target_file_size`
+    pub fn with_max_compaction_group_bytes(mut self, bytes: u64) -> crate::error::Result<Self> {
+        if bytes < self.target_file_size {
+            return Err(Error::invalid_input(format!(
+                "max_compaction_group_bytes ({}) must be at least target_file_size ({})",
+                bytes, self.target_file_size
+            )));
+        }
+        self.max_compaction_group_bytes = bytes;
+        Ok(self)
+    }
+
     /// Get target file size for output files
     pub fn target_file_size(&self) -> u64 {
         self.target_file_size
@@ -155,6 +184,11 @@ impl CompactOptions {
     /// Get minimum files per group to trigger compaction
     pub fn min_files_per_group(&self) -> usize {
         self.min_files_per_group
+    }
+
+    /// Get maximum bytes for a single compaction group
+    pub fn max_compaction_group_bytes(&self) -> u64 {
+        self.max_compaction_group_bytes
     }
 
     /// Get partition filter
@@ -183,9 +217,29 @@ mod tests {
         assert_eq!(options.target_file_size(), 256 * 1024 * 1024);
         assert_eq!(options.max_input_file_size(), 128 * 1024 * 1024);
         assert_eq!(options.min_files_per_group(), 3);
+        assert_eq!(options.max_compaction_group_bytes(), 512 * 1024 * 1024);
         assert_eq!(options.partition_filter(), None);
         assert!(!options.dry_run());
         assert!(!options.allow_partial_failure());
+    }
+
+    #[test]
+    fn test_with_max_compaction_group_bytes_valid() {
+        let options = CompactOptions::new()
+            .with_max_compaction_group_bytes(1024 * 1024 * 1024) // 1GB
+            .unwrap();
+        assert_eq!(options.max_compaction_group_bytes(), 1024 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_with_max_compaction_group_bytes_less_than_target() {
+        // Default target is 256MB, try setting max_group to 128MB
+        let result = CompactOptions::new().with_max_compaction_group_bytes(128 * 1024 * 1024);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("must be at least target_file_size"));
     }
 
     #[test]

@@ -40,7 +40,18 @@ pub enum TableCommand {
         /// Table identifier (namespace.table)
         table: String,
 
-        /// Filter expression (e.g., "date >= '2024-01-01' AND status = 'active'")
+        /// Filter expression for partition pruning.
+        ///
+        /// Syntax: column op value [AND|OR column op value ...]
+        ///
+        /// Operators: =, !=, <, <=, >, >=
+        ///
+        /// Examples:
+        ///   "date >= '2024-01-01'"
+        ///   "status = 'active' AND date >= '2024-01-01'"
+        ///
+        /// Note: Parentheses for grouping are not supported. AND takes precedence
+        /// over OR, so "a OR b AND c" is parsed as "a OR (b AND c)".
         #[arg(long, short)]
         filter: Option<String>,
     },
@@ -344,10 +355,12 @@ pub async fn execute(
                 .map_err(|e| format!("Failed to list files: {}", e))?;
 
             // Filter by partition if specified
+            // Uses exact path segment matching to avoid false positives
+            // (e.g., "year=2024" should not match "year=20241")
             let filtered_files: Vec<_> = if let Some(ref part_filter) = partition {
                 files
                     .into_iter()
-                    .filter(|f| f.file_path.contains(part_filter))
+                    .filter(|f| f.file_path.split('/').any(|segment| segment == part_filter))
                     .collect()
             } else {
                 files

@@ -177,14 +177,19 @@ impl RestCredentialProvider {
         Ok(registry.get(table_location).cloned())
     }
 
-    /// Check if credentials are cached for the given table location.
+    /// Check if non-expired credentials are cached for the given table location.
+    /// Returns None if credentials are not cached or have expired.
     fn check_cache_by_location(&self, table_location: &str) -> Result<Option<VendedCredentials>> {
         let cache = self
             .credential_cache
             .read()
             .map_err(|e| Error::IoError(format!("Failed to acquire cache read lock: {}", e)))?;
 
-        Ok(cache.get(table_location).cloned())
+        match cache.get(table_location) {
+            Some(creds) if !creds.is_expired() => Ok(Some(creds.clone())),
+            Some(_) => Ok(None), // Expired credentials - treat as cache miss
+            None => Ok(None),
+        }
     }
 
     /// Cache credentials for a table location.
@@ -329,6 +334,7 @@ impl VendedCredentialProvider for RestCredentialProvider {
                 .clone()
                 .or_else(|| self.s3_endpoint.clone()),
             region: cred.config.region.clone(),
+            expires_at_ms: cred.config.expires_at_ms,
         };
 
         // 7. Cache by table location
@@ -452,6 +458,7 @@ mod tests {
             session_token: Some(format!("token-{}", id)),
             endpoint: Some("https://s3.example.com".to_string()),
             region: Some("us-west-2".to_string()),
+            expires_at_ms: None, // No expiration for test credentials
         }
     }
 
@@ -637,5 +644,100 @@ mod tests {
         assert_eq!(tn1, "table1");
         assert_eq!(ns2, "ns2");
         assert_eq!(tn2, "table2");
+    }
+
+    #[test]
+    fn test_expired_credentials_not_returned_from_cache() {
+        let provider = create_test_provider();
+        let location = "s3://bucket/ns.db/table1";
+
+        // Create credentials that expired 1 hour ago
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let expired_creds = VendedCredentials {
+            access_key_id: "AKIAEXPIRED".to_string(),
+            secret_access_key: "expired-secret".to_string(),
+            session_token: None,
+            endpoint: Some("https://s3.example.com".to_string()),
+            region: Some("us-west-2".to_string()),
+            expires_at_ms: Some(now_ms - 3_600_000), // Expired 1 hour ago
+        };
+
+        // Store expired credentials
+        provider.cache_credentials(location, expired_creds).unwrap();
+
+        // Cache check should return None for expired credentials
+        let result = provider.check_cache_by_location(location).unwrap();
+        assert!(
+            result.is_none(),
+            "Expired credentials should not be returned from cache"
+        );
+    }
+
+    #[test]
+    fn test_valid_credentials_returned_from_cache() {
+        let provider = create_test_provider();
+        let location = "s3://bucket/ns.db/table1";
+
+        // Create credentials that expire in 1 hour
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let valid_creds = VendedCredentials {
+            access_key_id: "AKIAVALID".to_string(),
+            secret_access_key: "valid-secret".to_string(),
+            session_token: None,
+            endpoint: Some("https://s3.example.com".to_string()),
+            region: Some("us-west-2".to_string()),
+            expires_at_ms: Some(now_ms + 3_600_000), // Expires in 1 hour
+        };
+
+        // Store valid credentials
+        provider
+            .cache_credentials(location, valid_creds.clone())
+            .unwrap();
+
+        // Cache check should return the credentials
+        let result = provider.check_cache_by_location(location).unwrap();
+        assert!(
+            result.is_some(),
+            "Valid credentials should be returned from cache"
+        );
+        assert_eq!(result.unwrap().access_key_id, "AKIAVALID");
+    }
+
+    #[test]
+    fn test_credentials_near_expiry_not_returned() {
+        let provider = create_test_provider();
+        let location = "s3://bucket/ns.db/table1";
+
+        // Create credentials that expire in 30 seconds (within 60s buffer)
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let near_expiry_creds = VendedCredentials {
+            access_key_id: "AKIANEAREXPIRY".to_string(),
+            secret_access_key: "near-expiry-secret".to_string(),
+            session_token: None,
+            endpoint: Some("https://s3.example.com".to_string()),
+            region: Some("us-west-2".to_string()),
+            expires_at_ms: Some(now_ms + 30_000), // Expires in 30 seconds
+        };
+
+        // Store credentials
+        provider
+            .cache_credentials(location, near_expiry_creds)
+            .unwrap();
+
+        // Cache check should return None (within 60s buffer)
+        let result = provider.check_cache_by_location(location).unwrap();
+        assert!(
+            result.is_none(),
+            "Credentials near expiry should not be returned from cache"
+        );
     }
 }

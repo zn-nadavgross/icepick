@@ -48,6 +48,22 @@ pub struct PartitionError {
 }
 
 /// Execute a compaction plan
+///
+/// # Atomicity Warning
+///
+/// **Each partition is committed in a separate transaction.** If compaction fails
+/// mid-way through processing partitions, some partitions will be compacted while
+/// others remain unchanged. This means the table may be left in a partially
+/// compacted state.
+///
+/// To handle partial failures gracefully:
+/// - Use `options.with_allow_partial_failure(true)` to continue compacting other
+///   partitions even if one fails
+/// - Check `CompactionResult.errors` to see which partitions failed
+/// - Check `CompactionResult.partitions_failed` vs `partitions_compacted` for status
+///
+/// For fully atomic compaction, compact one partition at a time using
+/// `options.with_partition_filter()`.
 pub async fn execute_compaction(
     plan: CompactionPlan,
     table: &Table,

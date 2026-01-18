@@ -107,4 +107,7 @@ pub struct StorageCredentialConfig {
     pub endpoint: Option<String>,
     #[serde(rename = "s3.region")]
     pub region: Option<String>,
+    /// Credential expiration time in milliseconds since Unix epoch
+    #[serde(rename = "expires-at-ms")]
+    pub expires_at_ms: Option<i64>,
 }

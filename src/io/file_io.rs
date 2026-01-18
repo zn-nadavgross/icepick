@@ -22,6 +22,28 @@ pub struct VendedCredentials {
     pub session_token: Option<String>,
     pub endpoint: Option<String>,
     pub region: Option<String>,
+    /// Expiration time in milliseconds since Unix epoch (if provided by catalog)
+    pub expires_at_ms: Option<i64>,
+}
+
+impl VendedCredentials {
+    /// Check if these credentials have expired.
+    /// Returns false if no expiration time is set (credentials don't expire).
+    /// Uses a 60-second buffer to avoid using credentials that are about to expire.
+    pub fn is_expired(&self) -> bool {
+        const EXPIRY_BUFFER_MS: i64 = 60_000; // 60 seconds buffer
+
+        match self.expires_at_ms {
+            Some(expires_at) => {
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as i64)
+                    .unwrap_or(0);
+                now_ms >= (expires_at - EXPIRY_BUFFER_MS)
+            }
+            None => false, // No expiration set, assume valid
+        }
+    }
 }
 
 /// Trait for providers that can fetch vended credentials from a catalog

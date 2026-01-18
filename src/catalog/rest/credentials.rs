@@ -18,6 +18,11 @@ pub(crate) struct RestCredentialProvider {
     pub(crate) s3_endpoint: Option<String>,
     /// Cache credentials by table location prefix
     pub(crate) credential_cache: Arc<RwLock<HashMap<String, VendedCredentials>>>,
+    /// Map table location prefix -> (namespace, table_name) for UUID-based paths
+    /// R2 Data Catalog uses UUID-based file paths that cannot be parsed to extract
+    /// namespace/table name. This registry allows explicit registration of table
+    /// identity for credential lookup.
+    pub(crate) table_registry: Arc<RwLock<HashMap<String, (String, String)>>>,
 }
 
 /// Extract table location from a file path.
@@ -131,6 +136,47 @@ fn parse_table_identifier_from_location(location: &str) -> Result<(String, Strin
 }
 
 impl RestCredentialProvider {
+    /// Register a table's identity for credential lookup.
+    ///
+    /// This allows the credential provider to fetch credentials using the table's
+    /// actual namespace and name, rather than trying to parse them from file paths.
+    /// This is essential for R2 Data Catalog which uses UUID-based paths like:
+    /// `s3://bucket/019b9635-52b8-72b3-829b-de5900e5b195.019b9635-53e1-7732-b9f4-7b6b9ff240e7/data/file.parquet`
+    ///
+    /// # Arguments
+    /// * `table_location` - The table's location prefix (e.g., `s3://bucket/uuid.uuid`)
+    /// * `namespace` - The namespace name
+    /// * `table_name` - The table name
+    pub fn register_table(
+        &self,
+        table_location: &str,
+        namespace: &str,
+        table_name: &str,
+    ) -> Result<()> {
+        let mut registry = self.table_registry.write().map_err(|e| {
+            Error::IoError(format!(
+                "Failed to acquire table registry write lock: {}",
+                e
+            ))
+        })?;
+        registry.insert(
+            table_location.to_string(),
+            (namespace.to_string(), table_name.to_string()),
+        );
+        Ok(())
+    }
+
+    /// Look up a registered table identity by location.
+    ///
+    /// Returns `Some((namespace, table_name))` if the table was registered,
+    /// or `None` if not found.
+    fn lookup_registered_table(&self, table_location: &str) -> Result<Option<(String, String)>> {
+        let registry = self.table_registry.read().map_err(|e| {
+            Error::IoError(format!("Failed to acquire table registry read lock: {}", e))
+        })?;
+        Ok(registry.get(table_location).cloned())
+    }
+
     /// Check if credentials are cached for the given table location.
     fn check_cache_by_location(&self, table_location: &str) -> Result<Option<VendedCredentials>> {
         let cache = self
@@ -215,7 +261,14 @@ impl VendedCredentialProvider for RestCredentialProvider {
         }
 
         // 3. Derive table identifier from location
-        let (namespace, table_name) = parse_table_identifier_from_location(&table_location)?;
+        // Check if we have a registered table identity for this location (for UUID-based paths)
+        let (namespace, table_name) =
+            if let Some((ns, tn)) = self.lookup_registered_table(&table_location)? {
+                (ns, tn)
+            } else {
+                // Fall back to path parsing for backwards compatibility
+                parse_table_identifier_from_location(&table_location)?
+            };
 
         // 4. Fetch credentials from REST endpoint
         let creds_response = self.fetch_credentials(&namespace, &table_name).await?;
@@ -266,6 +319,16 @@ impl VendedCredentialProvider for RestCredentialProvider {
 
     fn s3_endpoint(&self) -> Option<&str> {
         self.s3_endpoint.as_deref()
+    }
+
+    fn register_table(
+        &self,
+        table_location: &str,
+        namespace: &str,
+        table_name: &str,
+    ) -> Result<()> {
+        // Delegate to the struct's register_table method
+        RestCredentialProvider::register_table(self, table_location, namespace, table_name)
     }
 }
 
@@ -358,6 +421,7 @@ mod tests {
             http_client: Client::new(),
             s3_endpoint: None,
             credential_cache: Arc::new(RwLock::new(HashMap::new())),
+            table_registry: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -485,5 +549,73 @@ mod tests {
             .check_cache_by_location(location)
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn test_table_registry_register_and_lookup() {
+        let provider = create_test_provider();
+        let location =
+            "s3://bucket/019b9635-52b8-72b3-829b-de5900e5b195.019b9635-53e1-7732-b9f4-7b6b9ff240e7";
+
+        // Initially not registered
+        let result = provider.lookup_registered_table(location).unwrap();
+        assert!(result.is_none());
+
+        // Register the table
+        provider
+            .register_table(location, "my_namespace", "my_table")
+            .unwrap();
+
+        // Now it should be found
+        let (namespace, table_name) = provider
+            .lookup_registered_table(location)
+            .unwrap()
+            .expect("Should find registered table");
+        assert_eq!(namespace, "my_namespace");
+        assert_eq!(table_name, "my_table");
+    }
+
+    #[test]
+    fn test_table_registry_overwrite() {
+        let provider = create_test_provider();
+        let location = "s3://bucket/uuid-path";
+
+        // Register initial values
+        provider.register_table(location, "ns1", "table1").unwrap();
+
+        // Overwrite with new values
+        provider.register_table(location, "ns2", "table2").unwrap();
+
+        // Should return the updated values
+        let (namespace, table_name) = provider
+            .lookup_registered_table(location)
+            .unwrap()
+            .expect("Should find registered table");
+        assert_eq!(namespace, "ns2");
+        assert_eq!(table_name, "table2");
+    }
+
+    #[test]
+    fn test_table_registry_multiple_tables() {
+        let provider = create_test_provider();
+        let location1 = "s3://bucket/uuid1";
+        let location2 = "s3://bucket/uuid2";
+
+        provider.register_table(location1, "ns1", "table1").unwrap();
+        provider.register_table(location2, "ns2", "table2").unwrap();
+
+        let (ns1, tn1) = provider
+            .lookup_registered_table(location1)
+            .unwrap()
+            .expect("Should find table1");
+        let (ns2, tn2) = provider
+            .lookup_registered_table(location2)
+            .unwrap()
+            .expect("Should find table2");
+
+        assert_eq!(ns1, "ns1");
+        assert_eq!(tn1, "table1");
+        assert_eq!(ns2, "ns2");
+        assert_eq!(tn2, "table2");
     }
 }

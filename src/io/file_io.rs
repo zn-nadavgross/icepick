@@ -33,6 +33,25 @@ pub trait VendedCredentialProvider: Send + Sync + std::fmt::Debug {
 
     /// Get the S3-compatible endpoint for this provider (if known)
     fn s3_endpoint(&self) -> Option<&str>;
+
+    /// Register a table's identity for credential lookup.
+    ///
+    /// This is used for catalogs like R2 Data Catalog that use UUID-based paths
+    /// where the namespace and table name cannot be parsed from the file path.
+    /// The default implementation does nothing (for providers that don't need this).
+    ///
+    /// # Arguments
+    /// * `table_location` - The table's location prefix
+    /// * `namespace` - The namespace name
+    /// * `table_name` - The table name
+    fn register_table(
+        &self,
+        _table_location: &str,
+        _namespace: &str,
+        _table_name: &str,
+    ) -> Result<()> {
+        Ok(()) // Default: no-op for providers that don't need table registration
+    }
 }
 
 /// File I/O abstraction for reading/writing Iceberg files
@@ -378,6 +397,32 @@ impl FileIO {
             .delete(normalized)
             .await
             .map_err(|e| Error::IoError(format!("Failed to delete {}: {}", path, e)))
+    }
+
+    /// Register a table's identity for credential lookup.
+    ///
+    /// This is used for catalogs like R2 Data Catalog that use UUID-based paths
+    /// where the namespace and table name cannot be parsed from the file path.
+    /// When vended credentials are used, this registers the table's identity
+    /// so that credential fetching can use the actual namespace and table name.
+    ///
+    /// This is a no-op if no vended credential provider is configured.
+    ///
+    /// # Arguments
+    /// * `table_location` - The table's location prefix
+    /// * `namespace` - The namespace name
+    /// * `table_name` - The table name
+    pub fn register_table(
+        &self,
+        table_location: &str,
+        namespace: &str,
+        table_name: &str,
+    ) -> Result<()> {
+        if let Some(ref provider) = self.vended_credential_provider {
+            provider.register_table(table_location, namespace, table_name)
+        } else {
+            Ok(()) // No-op if no vended credential provider
+        }
     }
 }
 

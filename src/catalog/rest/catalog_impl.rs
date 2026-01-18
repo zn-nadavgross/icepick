@@ -165,6 +165,13 @@ impl IcebergRestCatalog {
         let table_response: CreateTableResponse =
             self.execute_and_parse(req, "table response").await?;
 
+        // Register the table's identity with the FileIO for credential lookup.
+        // This is essential for R2 Data Catalog which uses UUID-based paths
+        // that cannot be parsed to extract namespace/table name.
+        let table_location = table_response.metadata.location();
+        self.file_io
+            .register_table(table_location, &namespace_name, creation.name())?;
+
         let table_ident =
             crate::spec::TableIdent::new(namespace.clone(), creation.name().to_string());
         helpers::build_table(
@@ -190,6 +197,13 @@ impl IcebergRestCatalog {
 
         let table_response: LoadTableResponse =
             self.execute_and_parse(req, "table response").await?;
+
+        // Register the table's identity with the FileIO for credential lookup.
+        // This is essential for R2 Data Catalog which uses UUID-based paths
+        // that cannot be parsed to extract namespace/table name.
+        let table_location = table_response.metadata.location();
+        self.file_io
+            .register_table(table_location, &namespace_name, table.name())?;
 
         helpers::build_table(
             table.clone(),

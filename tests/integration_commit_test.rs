@@ -13,6 +13,10 @@ struct TestCatalog;
 
 #[async_trait::async_trait]
 impl Catalog for TestCatalog {
+    fn file_io(&self) -> &FileIO {
+        panic!("TestCatalog::file_io() is not supported in tests")
+    }
+
     async fn create_namespace(
         &self,
         _namespace: &NamespaceIdent,

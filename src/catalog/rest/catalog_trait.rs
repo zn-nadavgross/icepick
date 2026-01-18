@@ -11,6 +11,10 @@ use async_trait::async_trait;
 #[cfg_attr(not(target_family = "wasm"), async_trait)]
 #[cfg_attr(target_family = "wasm", async_trait(?Send))]
 impl crate::catalog::Catalog for IcebergRestCatalog {
+    fn file_io(&self) -> &crate::io::FileIO {
+        IcebergRestCatalog::file_io(self)
+    }
+
     async fn create_namespace(
         &self,
         namespace: &crate::spec::NamespaceIdent,

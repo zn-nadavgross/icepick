@@ -21,6 +21,10 @@ impl RefreshingCatalog {
 
 #[async_trait::async_trait]
 impl icepick::catalog::Catalog for RefreshingCatalog {
+    fn file_io(&self) -> &icepick::io::FileIO {
+        panic!("RefreshingCatalog::file_io() is not supported - use table.file_io() instead")
+    }
+
     async fn create_namespace(
         &self,
         _namespace: &NamespaceIdent,

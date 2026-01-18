@@ -46,6 +46,12 @@ impl TestCatalog {
 
 #[async_trait]
 impl Catalog for TestCatalog {
+    fn file_io(&self) -> &icepick::io::FileIO {
+        // TestCatalog doesn't own a FileIO, but we can get it from the table
+        // This panics if called before a table is loaded, which is fine for tests
+        panic!("TestCatalog::file_io() is not supported - use table.file_io() instead")
+    }
+
     async fn create_namespace(
         &self,
         _namespace: &NamespaceIdent,

@@ -125,6 +125,10 @@ impl S3TablesCatalog {
 #[cfg(not(target_family = "wasm"))]
 #[async_trait]
 impl Catalog for S3TablesCatalog {
+    fn file_io(&self) -> &crate::io::FileIO {
+        self.inner.file_io()
+    }
+
     async fn create_namespace(
         &self,
         namespace: &NamespaceIdent,

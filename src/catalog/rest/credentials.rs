@@ -347,4 +347,143 @@ mod tests {
         let result = parse_table_identifier_from_location(location);
         assert!(result.is_err());
     }
+
+    /// Create a test RestCredentialProvider with dummy values.
+    /// Only the credential_cache is functional; HTTP calls will fail.
+    fn create_test_provider() -> RestCredentialProvider {
+        RestCredentialProvider {
+            endpoint: "http://localhost:8080".to_string(),
+            prefix: "test-prefix".to_string(),
+            token: "test-token".to_string(),
+            http_client: Client::new(),
+            s3_endpoint: None,
+            credential_cache: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    fn sample_credentials(id: &str) -> VendedCredentials {
+        VendedCredentials {
+            access_key_id: format!("AKIATEST{}", id),
+            secret_access_key: format!("secret-{}", id),
+            session_token: Some(format!("token-{}", id)),
+            endpoint: Some("https://s3.example.com".to_string()),
+            region: Some("us-west-2".to_string()),
+        }
+    }
+
+    #[test]
+    fn test_credential_caching_cache_miss_returns_none() {
+        let provider = create_test_provider();
+
+        // Cache miss: uncached location returns None
+        let result = provider
+            .check_cache_by_location("s3://bucket/ns.db/table1")
+            .unwrap();
+        assert!(result.is_none(), "Uncached location should return None");
+    }
+
+    #[test]
+    fn test_credential_caching_cache_hit_after_store() {
+        let provider = create_test_provider();
+        let location = "s3://bucket/ns.db/table1";
+        let creds = sample_credentials("1");
+
+        // Store credentials
+        provider.cache_credentials(location, creds.clone()).unwrap();
+
+        // Cache hit: should return the stored credentials
+        let cached = provider
+            .check_cache_by_location(location)
+            .unwrap()
+            .expect("Should find cached credentials");
+
+        assert_eq!(cached.access_key_id, creds.access_key_id);
+        assert_eq!(cached.secret_access_key, creds.secret_access_key);
+        assert_eq!(cached.session_token, creds.session_token);
+        assert_eq!(cached.endpoint, creds.endpoint);
+        assert_eq!(cached.region, creds.region);
+    }
+
+    #[test]
+    fn test_credential_caching_different_locations_get_different_entries() {
+        let provider = create_test_provider();
+
+        let location1 = "s3://bucket/ns.db/table1";
+        let location2 = "s3://bucket/ns.db/table2";
+        let creds1 = sample_credentials("1");
+        let creds2 = sample_credentials("2");
+
+        // Store credentials for both locations
+        provider
+            .cache_credentials(location1, creds1.clone())
+            .unwrap();
+        provider
+            .cache_credentials(location2, creds2.clone())
+            .unwrap();
+
+        // Verify each location returns its own credentials
+        let cached1 = provider
+            .check_cache_by_location(location1)
+            .unwrap()
+            .expect("Should find cached credentials for table1");
+        let cached2 = provider
+            .check_cache_by_location(location2)
+            .unwrap()
+            .expect("Should find cached credentials for table2");
+
+        assert_eq!(cached1.access_key_id, creds1.access_key_id);
+        assert_eq!(cached2.access_key_id, creds2.access_key_id);
+        assert_ne!(cached1.access_key_id, cached2.access_key_id);
+    }
+
+    #[test]
+    fn test_credential_caching_overwrite_existing() {
+        let provider = create_test_provider();
+        let location = "s3://bucket/ns.db/table1";
+
+        let creds_v1 = sample_credentials("v1");
+        let creds_v2 = sample_credentials("v2");
+
+        // Store initial credentials
+        provider.cache_credentials(location, creds_v1).unwrap();
+
+        // Overwrite with new credentials
+        provider
+            .cache_credentials(location, creds_v2.clone())
+            .unwrap();
+
+        // Should return the updated credentials
+        let cached = provider
+            .check_cache_by_location(location)
+            .unwrap()
+            .expect("Should find cached credentials");
+
+        assert_eq!(cached.access_key_id, creds_v2.access_key_id);
+        assert_eq!(cached.secret_access_key, creds_v2.secret_access_key);
+    }
+
+    #[test]
+    fn test_credential_caching_cache_isolation() {
+        // Each provider has its own cache
+        let provider1 = create_test_provider();
+        let provider2 = create_test_provider();
+
+        let location = "s3://bucket/ns.db/shared_table";
+        let creds = sample_credentials("shared");
+
+        // Store in provider1's cache only
+        provider1.cache_credentials(location, creds).unwrap();
+
+        // provider1 should have the entry
+        assert!(provider1
+            .check_cache_by_location(location)
+            .unwrap()
+            .is_some());
+
+        // provider2 should not have the entry (separate cache)
+        assert!(provider2
+            .check_cache_by_location(location)
+            .unwrap()
+            .is_none());
+    }
 }

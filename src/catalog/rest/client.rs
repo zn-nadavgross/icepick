@@ -291,6 +291,7 @@ impl IcebergRestCatalog {
             token: token.clone(),
             http_client: http_client.clone(),
             s3_endpoint,
+            credential_cache: Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
         });
 
         // Create FileIO with vended credential support

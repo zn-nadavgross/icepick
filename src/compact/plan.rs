@@ -85,8 +85,8 @@ impl CompactionPlan {
             let partition_key = extract_partition_value(file.file_path());
 
             // Apply partition filter if specified
-            if let Some(ref filter) = options.partition_filter {
-                if partition_key.as_ref() != Some(filter) {
+            if let Some(filter) = options.partition_filter() {
+                if partition_key.as_deref() != Some(filter) {
                     continue;
                 }
             }
@@ -102,9 +102,9 @@ impl CompactionPlan {
 
         for (partition_value, mut files) in partition_groups {
             // Filter to files smaller than max_input_file_size
-            files.retain(|f| (f.file_size_in_bytes() as u64) < options.max_input_file_size);
+            files.retain(|f| (f.file_size_in_bytes() as u64) < options.max_input_file_size());
 
-            if files.len() < options.min_files_per_group {
+            if files.len() < options.min_files_per_group() {
                 // Not enough files to compact
                 continue;
             }
@@ -113,8 +113,11 @@ impl CompactionPlan {
             files.sort_by_key(|f| f.file_size_in_bytes());
 
             // Greedy bin-packing (first-fit decreasing)
-            let groups =
-                bin_pack_files(files, options.target_file_size, options.min_files_per_group);
+            let groups = bin_pack_files(
+                files,
+                options.target_file_size(),
+                options.min_files_per_group(),
+            );
 
             if groups.is_empty() {
                 continue;

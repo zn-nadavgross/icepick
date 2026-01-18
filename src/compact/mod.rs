@@ -13,8 +13,8 @@
 //! # async fn example(table: &icepick::Table, catalog: &dyn Catalog) -> Result<(), Box<dyn std::error::Error>> {
 //! // Create compaction options
 //! let options = CompactOptions::new()
-//!     .with_target_file_size(256 * 1024 * 1024)  // 256 MB
-//!     .with_min_files_per_group(3);
+//!     .with_target_file_size(256 * 1024 * 1024)?  // 256 MB
+//!     .with_min_files_per_group(3)?;
 //!
 //! // Create a compaction plan
 //! let plan = CompactionPlan::create(table, &options).await?;

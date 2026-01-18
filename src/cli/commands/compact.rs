@@ -192,8 +192,11 @@ pub async fn execute(
     // Build compaction options
     let mut options = CompactOptions::new()
         .with_target_file_size(args.target_size)
+        .map_err(|e| format!("Invalid target size: {}", e))?
         .with_max_input_file_size(args.max_input_size)
+        .map_err(|e| format!("Invalid max input size: {}", e))?
         .with_min_files_per_group(args.min_files)
+        .map_err(|e| format!("Invalid min files: {}", e))?
         .with_dry_run(args.dry_run);
 
     if let Some(partition) = args.partition {
@@ -268,7 +271,7 @@ fn build_plan_output(
                 partition: p.partition_value.clone(),
                 input_files: p.total_input_files,
                 input_bytes: p.total_input_bytes,
-                estimated_output_files: p.estimated_output_files(options.target_file_size),
+                estimated_output_files: p.estimated_output_files(options.target_file_size()),
                 avg_file_size: avg_size,
             }
         })
@@ -278,8 +281,8 @@ fn build_plan_output(
         table: table.to_string(),
         partitions,
         total_input_files: plan.total_input_files(),
-        estimated_output_files: plan.estimated_output_files(options.target_file_size),
+        estimated_output_files: plan.estimated_output_files(options.target_file_size()),
         total_input_bytes: plan.total_input_bytes(),
-        dry_run: options.dry_run,
+        dry_run: options.dry_run(),
     }
 }

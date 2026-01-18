@@ -53,7 +53,7 @@ pub async fn execute_compaction(
     catalog: &dyn Catalog,
     options: &CompactOptions,
 ) -> Result<CompactionResult> {
-    if options.dry_run {
+    if options.dry_run() {
         return Err(Error::InvalidInput(
             "Cannot execute compaction in dry-run mode".to_string(),
         ));
@@ -93,7 +93,7 @@ pub async fn execute_compaction(
     }
 
     // Check if we should fail on partial failures
-    if result.partitions_failed > 0 && !options.allow_partial_failure {
+    if result.partitions_failed > 0 && !options.allow_partial_failure() {
         return Err(Error::InvalidInput(format!(
             "Compaction failed on {} of {} partitions. Use --allow-partial-failure to continue on errors.\n\nErrors:\n{}",
             result.partitions_failed,

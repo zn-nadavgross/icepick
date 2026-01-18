@@ -55,7 +55,10 @@ impl Transform {
         }
         if let Some(n) = s.strip_prefix("bucket[").and_then(|s| s.strip_suffix(']')) {
             if let Ok(num) = n.parse::<u32>() {
-                return Some(Transform::Bucket(num));
+                // Validate width > 0 to prevent division by zero
+                if num > 0 {
+                    return Some(Transform::Bucket(num));
+                }
             }
         }
         if let Some(n) = s
@@ -63,7 +66,10 @@ impl Transform {
             .and_then(|s| s.strip_suffix(']'))
         {
             if let Ok(num) = n.parse::<u32>() {
-                return Some(Transform::Truncate(num));
+                // Validate width > 0 to prevent division by zero
+                if num > 0 {
+                    return Some(Transform::Truncate(num));
+                }
             }
         }
         None
@@ -310,15 +316,21 @@ fn transform_value_for_partition(value: &Datum, transform: Transform) -> Option<
             None
         }
 
-        Transform::Truncate(width) => match value {
-            Datum::Int(v) => Some(Datum::Int((v / width as i32) * width as i32)),
-            Datum::Long(v) => Some(Datum::Long((v / width as i64) * width as i64)),
-            Datum::String(s) => {
-                let truncated: String = s.chars().take(width as usize).collect();
-                Some(Datum::String(truncated))
+        Transform::Truncate(width) => {
+            // Safety guard: width must be > 0 to prevent division by zero
+            if width == 0 {
+                return None;
             }
-            _ => None,
-        },
+            match value {
+                Datum::Int(v) => Some(Datum::Int((v / width as i32) * width as i32)),
+                Datum::Long(v) => Some(Datum::Long((v / width as i64) * width as i64)),
+                Datum::String(s) => {
+                    let truncated: String = s.chars().take(width as usize).collect();
+                    Some(Datum::String(truncated))
+                }
+                _ => None,
+            }
+        }
 
         Transform::Void => None,
     }
@@ -494,5 +506,72 @@ mod tests {
             Datum::from_bytes(&bytes, &PrimitiveType::String),
             Some(Datum::String("hello".to_string()))
         );
+    }
+
+    #[test]
+    fn test_transform_parse_zero_width_rejection() {
+        // bucket[0] should be rejected
+        assert_eq!(Transform::parse("bucket[0]"), None);
+
+        // truncate[0] should be rejected
+        assert_eq!(Transform::parse("truncate[0]"), None);
+
+        // Valid widths should still work
+        assert_eq!(Transform::parse("bucket[1]"), Some(Transform::Bucket(1)));
+        assert_eq!(
+            Transform::parse("truncate[1]"),
+            Some(Transform::Truncate(1))
+        );
+        assert_eq!(
+            Transform::parse("bucket[100]"),
+            Some(Transform::Bucket(100))
+        );
+        assert_eq!(
+            Transform::parse("truncate[100]"),
+            Some(Transform::Truncate(100))
+        );
+    }
+
+    #[test]
+    fn test_transform_parse_malformed_input() {
+        // Non-numeric values should be rejected
+        assert_eq!(Transform::parse("bucket[abc]"), None);
+        assert_eq!(Transform::parse("truncate[xyz]"), None);
+        assert_eq!(Transform::parse("bucket[not_a_number]"), None);
+
+        // Missing brackets or malformed syntax
+        assert_eq!(Transform::parse("bucket"), None);
+        assert_eq!(Transform::parse("truncate"), None);
+        assert_eq!(Transform::parse("bucket[10"), None);
+        assert_eq!(Transform::parse("truncate10]"), None);
+    }
+
+    #[test]
+    fn test_truncate_transform_zero_width_safety() {
+        // Even if a zero-width transform somehow exists (shouldn't happen after parser fix),
+        // the transform function should handle it safely
+        let value = Datum::Int(100);
+        let result = transform_value_for_partition(&value, Transform::Truncate(0));
+        assert_eq!(result, None);
+
+        let value = Datum::Long(1000);
+        let result = transform_value_for_partition(&value, Transform::Truncate(0));
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_truncate_transform_valid_widths() {
+        // Test that valid widths still work correctly
+        let value = Datum::Int(123);
+        let result = transform_value_for_partition(&value, Transform::Truncate(10));
+        assert_eq!(result, Some(Datum::Int(120)));
+
+        let value = Datum::Long(456);
+        let result = transform_value_for_partition(&value, Transform::Truncate(100));
+        assert_eq!(result, Some(Datum::Long(400)));
+
+        let value = Datum::String("hello world".to_string());
+        let result = transform_value_for_partition(&value, Transform::Truncate(5));
+        assert_eq!(result, Some(Datum::String("hello".to_string())));
     }
 }

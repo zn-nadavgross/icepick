@@ -132,7 +132,7 @@ async fn execute_partition_compaction(
         let (new_files, bytes_before, bytes_after, records) =
             compact_group(group, table, file_io).await?;
 
-        all_files_to_delete.extend(group.input_files.clone());
+        all_files_to_delete.extend(group.files().iter().cloned());
         all_files_to_add.extend(new_files);
         total_bytes_before += bytes_before;
         total_bytes_after += bytes_after;
@@ -170,14 +170,14 @@ async fn compact_group(
 ) -> Result<(Vec<DataFile>, u64, u64, u64)> {
     debug!(
         "Compacting group with {} files ({} bytes)",
-        group.input_files.len(),
-        group.input_bytes
+        group.files().len(),
+        group.total_bytes()
     );
 
     // Read all input files and collect batches
     let mut all_batches: Vec<RecordBatch> = Vec::new();
 
-    for file in &group.input_files {
+    for file in group.files() {
         let batches = read_parquet_file(file_io, file.file_path()).await?;
         all_batches.extend(batches);
     }
@@ -185,8 +185,8 @@ async fn compact_group(
     if all_batches.is_empty() {
         return Err(Error::InvalidInput(format!(
             "Compaction group produced no data from {} input files (total {} bytes). All files may be empty or failed to read.",
-            group.input_files.len(),
-            group.input_bytes
+            group.files().len(),
+            group.total_bytes()
         )));
     }
 
@@ -200,7 +200,7 @@ async fn compact_group(
     let total_records = combined_batch.num_rows() as u64;
 
     // Generate output path
-    let partition_path = if let Some(first_file) = group.input_files.first() {
+    let partition_path = if let Some(first_file) = group.files().first() {
         // Extract partition path from first input file
         extract_partition_path(first_file.file_path())
     } else {
@@ -213,7 +213,7 @@ async fn compact_group(
         table.location(),
         partition_path,
         uuid,
-        group.input_files.len()
+        group.files().len()
     );
 
     // Write compacted file
@@ -222,7 +222,7 @@ async fn compact_group(
 
     Ok((
         vec![new_file],
-        group.input_bytes,
+        group.total_bytes(),
         bytes_after,
         total_records,
     ))

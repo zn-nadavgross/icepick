@@ -10,11 +10,56 @@ use std::collections::HashMap;
 #[derive(Debug, Clone)]
 pub struct CompactionGroup {
     /// Input files to compact
-    pub input_files: Vec<DataFile>,
+    input_files: Vec<DataFile>,
     /// Total size of input files in bytes
-    pub input_bytes: u64,
+    input_bytes: u64,
     /// Total record count in input files
-    pub input_records: u64,
+    input_records: u64,
+}
+
+impl CompactionGroup {
+    /// Create a new compaction group from input files
+    ///
+    /// Automatically computes total bytes and records from the files.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `input_files` is empty
+    pub fn new(input_files: Vec<DataFile>) -> Result<Self> {
+        if input_files.is_empty() {
+            return Err(crate::error::Error::invalid_input(
+                "CompactionGroup cannot be created with empty input_files",
+            ));
+        }
+
+        let input_bytes = input_files
+            .iter()
+            .map(|f| f.file_size_in_bytes() as u64)
+            .sum();
+
+        let input_records = input_files.iter().map(|f| f.record_count() as u64).sum();
+
+        Ok(Self {
+            input_files,
+            input_bytes,
+            input_records,
+        })
+    }
+
+    /// Get the input files to compact
+    pub fn files(&self) -> &[DataFile] {
+        &self.input_files
+    }
+
+    /// Get the total size of input files in bytes
+    pub fn total_bytes(&self) -> u64 {
+        self.input_bytes
+    }
+
+    /// Get the total record count in input files
+    pub fn total_records(&self) -> u64 {
+        self.input_records
+    }
 }
 
 /// Plan for compacting a single partition
@@ -36,7 +81,7 @@ impl PartitionPlan {
         self.groups
             .iter()
             .map(|g| {
-                let files = (g.input_bytes as f64 / target_size as f64).ceil() as usize;
+                let files = (g.total_bytes() as f64 / target_size as f64).ceil() as usize;
                 files.max(1)
             })
             .sum()
@@ -123,8 +168,8 @@ impl CompactionPlan {
                 continue;
             }
 
-            let total_input_files: usize = groups.iter().map(|g| g.input_files.len()).sum();
-            let total_input_bytes: u64 = groups.iter().map(|g| g.input_bytes).sum();
+            let total_input_files: usize = groups.iter().map(|g| g.files().len()).sum();
+            let total_input_bytes: u64 = groups.iter().map(|g| g.total_bytes()).sum();
 
             partitions.push(PartitionPlan {
                 partition_value,
@@ -190,19 +235,19 @@ fn bin_pack_files(
     target_size: u64,
     min_files_per_group: usize,
 ) -> Vec<CompactionGroup> {
-    let mut groups: Vec<CompactionGroup> = Vec::new();
+    // Track groups as Vec<Vec<DataFile>> during packing
+    let mut group_files: Vec<Vec<DataFile>> = Vec::new();
+    let mut group_sizes: Vec<u64> = Vec::new();
 
     for file in files {
         let file_size = file.file_size_in_bytes() as u64;
-        let file_records = file.record_count();
 
         // Try to find an existing group that can fit this file
         let mut placed = false;
-        for group in &mut groups {
-            if group.input_bytes + file_size <= target_size {
-                group.input_bytes += file_size;
-                group.input_records += file_records as u64;
-                group.input_files.push(file.clone());
+        for (idx, current_size) in group_sizes.iter_mut().enumerate() {
+            if *current_size + file_size <= target_size {
+                *current_size += file_size;
+                group_files[idx].push(file.clone());
                 placed = true;
                 break;
             }
@@ -210,23 +255,102 @@ fn bin_pack_files(
 
         // Create a new group if no existing group can fit the file
         if !placed {
-            groups.push(CompactionGroup {
-                input_files: vec![file],
-                input_bytes: file_size,
-                input_records: file_records as u64,
-            });
+            group_files.push(vec![file]);
+            group_sizes.push(file_size);
         }
     }
 
+    // Convert Vec<Vec<DataFile>> to Vec<CompactionGroup>
     // Filter out groups that don't meet the minimum file count
-    groups.retain(|g| g.input_files.len() >= min_files_per_group);
-
-    groups
+    group_files
+        .into_iter()
+        .filter(|files| files.len() >= min_files_per_group)
+        .filter_map(|files| CompactionGroup::new(files).ok())
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_compaction_group_new_with_valid_files() {
+        let file1 = DataFile::builder()
+            .with_file_path("s3://bucket/file1.parquet")
+            .with_file_format("PARQUET")
+            .with_record_count(100)
+            .with_file_size_in_bytes(1024)
+            .build()
+            .unwrap();
+
+        let file2 = DataFile::builder()
+            .with_file_path("s3://bucket/file2.parquet")
+            .with_file_format("PARQUET")
+            .with_record_count(200)
+            .with_file_size_in_bytes(2048)
+            .build()
+            .unwrap();
+
+        let group = CompactionGroup::new(vec![file1, file2]).unwrap();
+
+        assert_eq!(group.files().len(), 2);
+        assert_eq!(group.total_bytes(), 1024 + 2048);
+        assert_eq!(group.total_records(), 100 + 200);
+    }
+
+    #[test]
+    fn test_compaction_group_new_with_empty_files() {
+        let result = CompactionGroup::new(vec![]);
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("CompactionGroup cannot be created with empty input_files"));
+    }
+
+    #[test]
+    fn test_compaction_group_getters() {
+        let file = DataFile::builder()
+            .with_file_path("s3://bucket/file.parquet")
+            .with_file_format("PARQUET")
+            .with_record_count(150)
+            .with_file_size_in_bytes(3000)
+            .build()
+            .unwrap();
+
+        let group = CompactionGroup::new(vec![file.clone()]).unwrap();
+
+        // Test getter methods
+        assert_eq!(group.files().len(), 1);
+        assert_eq!(group.files()[0].file_path(), file.file_path());
+        assert_eq!(group.total_bytes(), 3000);
+        assert_eq!(group.total_records(), 150);
+    }
+
+    #[test]
+    fn test_compaction_group_automatic_aggregates() {
+        // Verify that aggregates are computed automatically and correctly
+        let files: Vec<DataFile> = (0..5)
+            .map(|i| {
+                DataFile::builder()
+                    .with_file_path(&format!("s3://bucket/file{}.parquet", i))
+                    .with_file_format("PARQUET")
+                    .with_record_count(100 + i as i64)
+                    .with_file_size_in_bytes(1000 + i as i64)
+                    .build()
+                    .unwrap()
+            })
+            .collect();
+
+        let expected_bytes: u64 = files.iter().map(|f| f.file_size_in_bytes() as u64).sum();
+        let expected_records: u64 = files.iter().map(|f| f.record_count() as u64).sum();
+
+        let group = CompactionGroup::new(files).unwrap();
+
+        assert_eq!(group.total_bytes(), expected_bytes);
+        assert_eq!(group.total_records(), expected_records);
+    }
 
     #[test]
     fn test_extract_partition_value() {
@@ -261,5 +385,46 @@ mod tests {
     fn test_bin_pack_empty() {
         let groups = bin_pack_files(vec![], 256 * 1024 * 1024, 3);
         assert!(groups.is_empty());
+    }
+
+    #[test]
+    fn test_bin_pack_filters_small_groups() {
+        // Create 2 files that are small enough to fit in target but below min_files_per_group
+        let files: Vec<DataFile> = (0..2)
+            .map(|i| {
+                DataFile::builder()
+                    .with_file_path(&format!("s3://bucket/file{}.parquet", i))
+                    .with_file_format("PARQUET")
+                    .with_record_count(100)
+                    .with_file_size_in_bytes(1024)
+                    .build()
+                    .unwrap()
+            })
+            .collect();
+
+        let groups = bin_pack_files(files, 256 * 1024 * 1024, 3);
+        // Should be empty because group has only 2 files but min is 3
+        assert!(groups.is_empty());
+    }
+
+    #[test]
+    fn test_bin_pack_creates_valid_groups() {
+        // Create enough files to form a valid group
+        let files: Vec<DataFile> = (0..5)
+            .map(|i| {
+                DataFile::builder()
+                    .with_file_path(&format!("s3://bucket/file{}.parquet", i))
+                    .with_file_format("PARQUET")
+                    .with_record_count(100)
+                    .with_file_size_in_bytes(1024)
+                    .build()
+                    .unwrap()
+            })
+            .collect();
+
+        let groups = bin_pack_files(files, 256 * 1024 * 1024, 3);
+        // Should create one group with all 5 files
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].files().len(), 5);
     }
 }

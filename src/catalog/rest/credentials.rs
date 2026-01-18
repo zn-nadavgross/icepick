@@ -4,6 +4,7 @@ use crate::io::{VendedCredentialProvider, VendedCredentials};
 use reqwest::Client;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+use urlencoding::encode;
 
 use super::types::LoadTableCredentialsResponse;
 
@@ -130,16 +131,14 @@ fn parse_table_identifier_from_location(location: &str) -> Result<(String, Strin
 }
 
 impl RestCredentialProvider {
-    /// Check if credentials are cached for the given path's table location.
-    fn check_cache(&self, path: &str) -> Result<Option<VendedCredentials>> {
-        let table_location = extract_table_location(path)?;
-
+    /// Check if credentials are cached for the given table location.
+    fn check_cache_by_location(&self, table_location: &str) -> Result<Option<VendedCredentials>> {
         let cache = self
             .credential_cache
             .read()
             .map_err(|e| Error::IoError(format!("Failed to acquire cache read lock: {}", e)))?;
 
-        Ok(cache.get(&table_location).cloned())
+        Ok(cache.get(table_location).cloned())
     }
 
     /// Cache credentials for a table location.
@@ -162,9 +161,9 @@ impl RestCredentialProvider {
         let url = format!(
             "{}/v1/{}/namespaces/{}/tables/{}/credentials",
             self.endpoint.trim_end_matches('/'),
-            self.prefix,
-            namespace,
-            table_name
+            encode(&self.prefix),
+            encode(namespace),
+            encode(table_name)
         );
 
         let response = self
@@ -207,13 +206,13 @@ impl RestCredentialProvider {
 #[cfg_attr(target_family = "wasm", async_trait::async_trait(?Send))]
 impl VendedCredentialProvider for RestCredentialProvider {
     async fn get_credentials(&self, path: &str) -> Result<VendedCredentials> {
-        // 1. Check cache first
-        if let Some(cached) = self.check_cache(path)? {
+        // 1. Parse table location from path
+        let table_location = extract_table_location(path)?;
+
+        // 2. Check cache first using the extracted table location
+        if let Some(cached) = self.check_cache_by_location(&table_location)? {
             return Ok(cached);
         }
-
-        // 2. Parse table location from path
-        let table_location = extract_table_location(path)?;
 
         // 3. Derive table identifier from location
         let (namespace, table_name) = parse_table_identifier_from_location(&table_location)?;

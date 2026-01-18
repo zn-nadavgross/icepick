@@ -13,6 +13,7 @@ use bytes::Bytes;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::arrow::ArrowWriter;
 use parquet::file::properties::WriterProperties;
+use std::collections::HashMap;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
@@ -216,8 +217,12 @@ async fn compact_group(
         group.files().len()
     );
 
+    // Extract partition data from the first input file (if any)
+    let partition = group.files().first().map(|f| f.partition());
+
     // Write compacted file
-    let new_file = write_compacted_parquet(file_io, &output_path, combined_batch).await?;
+    let new_file =
+        write_compacted_parquet(file_io, &output_path, combined_batch, partition).await?;
     let bytes_after = new_file.file_size_in_bytes() as u64;
 
     Ok((
@@ -262,6 +267,7 @@ async fn write_compacted_parquet(
     file_io: &FileIO,
     path: &str,
     batch: RecordBatch,
+    partition: Option<&HashMap<String, String>>,
 ) -> Result<DataFile> {
     let schema = batch.schema();
     let record_count = batch.num_rows() as i64;
@@ -288,12 +294,17 @@ async fn write_compacted_parquet(
 
     file_io.write(path, parquet_bytes).await?;
 
-    DataFile::builder()
+    let mut builder = DataFile::builder()
         .with_file_path(path)
         .with_file_format("PARQUET")
         .with_record_count(record_count)
-        .with_file_size_in_bytes(file_size)
-        .build()
+        .with_file_size_in_bytes(file_size);
+
+    if let Some(partition_data) = partition {
+        builder = builder.with_partition(partition_data.clone());
+    }
+
+    builder.build()
 }
 
 /// Extract the partition path from a full file path

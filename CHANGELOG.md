@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-01-17
+
+### Added
+
+#### List Namespaces
+- Added `list_namespaces()` method to Catalog trait
+- Implemented REST API integration for listing namespaces
+- Updated CLI `namespace list` command to display namespaces
+
+#### Vended Credentials
+- Implemented `RestCredentialProvider` with credential caching
+- Added path parsing to derive table identity from file paths
+- Credentials fetched from REST catalog endpoint and cached per table location
+
+## [0.4.0]
+
 ### Added
 - Initial release of Icepick
 - `S3TablesCatalog` for AWS S3 Tables with SigV4 authentication (native platforms only)
@@ -37,5 +53,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Initial release.
 
-[unreleased]: https://github.com/yourusername/icepick/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/yourusername/icepick/releases/tag/v0.1.0
+[unreleased]: https://github.com/smithclay/icepick/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/smithclay/icepick/releases/tag/v0.5.0
+[0.4.0]: https://github.com/smithclay/icepick/releases/tag/v0.4.0

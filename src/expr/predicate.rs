@@ -629,7 +629,10 @@ mod tests {
         // Negative IDs should fail
         let negative = ColumnRef::id(-1);
         assert!(negative.is_err());
-        assert!(negative.unwrap_err().to_string().contains("must be positive"));
+        assert!(negative
+            .unwrap_err()
+            .to_string()
+            .contains("must be positive"));
 
         let very_negative = ColumnRef::id(-999);
         assert!(very_negative.is_err());

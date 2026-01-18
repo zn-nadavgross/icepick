@@ -67,10 +67,13 @@ pub async fn execute(
 
     match command {
         NamespaceCommand::List => {
-            // Note: Most Iceberg catalogs don't have a list_namespaces method
-            // This is a placeholder that will need to be implemented per catalog
+            let namespaces = catalog
+                .list_namespaces()
+                .await
+                .map_err(|e| format!("Failed to list namespaces: {}", e))?;
+
             let result = NamespaceList {
-                namespaces: vec!["(namespace listing not supported - use table list)".to_string()],
+                namespaces: namespaces.iter().map(|ns| ns.to_string()).collect(),
             };
             print(&result, format);
             Ok(())

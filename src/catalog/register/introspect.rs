@@ -131,6 +131,33 @@ pub struct ParquetIntrospection {
     pub partition_values: Option<HashMap<String, PartitionValue>>,
 }
 
+/// Introspect a local Parquet file on the filesystem.
+///
+/// This is a convenience wrapper for CLI use that creates a local FileIO
+/// and calls `introspect_parquet_file`. The returned `DataFileInput` will
+/// have `file_path` set to the original local path - callers should update
+/// this to the remote path after uploading.
+///
+/// # Arguments
+/// * `path` - Absolute path to a local Parquet file
+/// * `partition_spec` - Optional partition spec for extracting Hive-style partition values
+#[cfg(not(target_family = "wasm"))]
+pub async fn introspect_local_parquet_file(
+    path: &str,
+    partition_spec: Option<&PartitionSpec>,
+) -> Result<ParquetIntrospection> {
+    use crate::io::local::{create_local_file_io, get_filename};
+
+    let local_file_io = create_local_file_io(path)?;
+    let filename = get_filename(path);
+    let mut result = introspect_parquet_file(&local_file_io, filename, partition_spec).await?;
+
+    // Restore the original full path (introspect_parquet_file only sees the filename)
+    result.data_file.file_path = path.to_string();
+
+    Ok(result)
+}
+
 /// Infer partition values from a path like `col1=value1/col2=5/part-000.parquet`.
 ///
 /// This is intentionally strict when a partition spec is provided:

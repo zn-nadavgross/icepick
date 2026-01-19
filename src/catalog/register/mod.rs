@@ -14,6 +14,8 @@ use crate::table::Table;
 use chrono::Utc;
 use validate::validate_schema;
 
+#[cfg(not(target_family = "wasm"))]
+pub use introspect::introspect_local_parquet_file;
 pub use introspect::{
     convert_partition_values, infer_partition_values_from_path, introspect_parquet_file,
     parse_hive_partition_values, ParquetIntrospection,

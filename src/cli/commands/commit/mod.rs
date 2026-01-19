@@ -7,9 +7,7 @@ use std::collections::HashMap;
 
 use clap::Args;
 
-use crate::catalog::register::{
-    introspect_local_parquet_file, introspect_parquet_file, DataFileInput, RegisterOptions,
-};
+use crate::catalog::register::{DataFileInput, RegisterOptions};
 use crate::cli::catalog::CatalogConfig;
 use crate::cli::output::{print, OutputFormat};
 use crate::io::{get_filename, is_local_path};
@@ -17,7 +15,7 @@ use crate::spec::{NamespaceIdent, PartitionSpec, Schema, TableIdent};
 
 use helpers::{
     determine_partition_values, expand_glob, format_partition_key, generate_upload_path,
-    upload_local_file,
+    introspect_file, upload_local_file,
 };
 use output::{CommitPlanOutput, CommitResultOutput, PartitionSummary, SchemaMismatch};
 
@@ -68,27 +66,19 @@ struct TableLocationResult {
     table_was_pre_created: bool,
 }
 
-/// Context for resolving table location
-struct TableContext<'a> {
-    catalog: &'a dyn crate::catalog::Catalog,
-    namespace: &'a NamespaceIdent,
-    table_ident: &'a TableIdent,
-    schema: &'a Schema,
-    partition_spec: Option<&'a PartitionSpec>,
-    ns_name: &'a str,
-    table_name: &'a str,
-}
-
 /// Resolve table location for local file uploads.
 async fn resolve_table_location(
-    ctx: &TableContext<'_>,
+    catalog: &dyn crate::catalog::Catalog,
+    namespace: &NamespaceIdent,
+    table_ident: &TableIdent,
+    schema: &Schema,
+    partition_spec: Option<&PartitionSpec>,
     table_exists: bool,
     dry_run: bool,
 ) -> Result<TableLocationResult, String> {
     if table_exists {
-        let table = ctx
-            .catalog
-            .load_table(ctx.table_ident)
+        let table = catalog
+            .load_table(table_ident)
             .await
             .map_err(|e| format!("Failed to load table: {}", e))?;
         return Ok(TableLocationResult {
@@ -97,18 +87,21 @@ async fn resolve_table_location(
         });
     }
 
+    let ns_name = namespace.as_ref().first().map(|s| s.as_str()).unwrap_or("");
+    let table_name = table_ident.name();
+
     if dry_run {
         return Ok(TableLocationResult {
-            location: format!("s3://<bucket>/{}/{}", ctx.ns_name, ctx.table_name),
+            location: format!("s3://<bucket>/{}/{}", ns_name, table_name),
             table_was_pre_created: false,
         });
     }
 
     let mut creation_builder = crate::spec::TableCreation::builder()
-        .with_name(ctx.table_name.to_string())
-        .with_schema(ctx.schema.clone());
+        .with_name(table_name.to_string())
+        .with_schema(schema.clone());
 
-    if let Some(spec) = ctx.partition_spec {
+    if let Some(spec) = partition_spec {
         creation_builder = creation_builder.with_partition_spec(spec.clone());
     }
 
@@ -116,13 +109,12 @@ async fn resolve_table_location(
         .build()
         .map_err(|e| format!("Failed to build table creation: {}", e))?;
 
-    let table = ctx
-        .catalog
-        .create_table(ctx.namespace, creation)
+    let table = catalog
+        .create_table(namespace, creation)
         .await
         .map_err(|e| format!("Failed to create table: {}", e))?;
 
-    println!("Created table: {}.{}", ctx.ns_name, ctx.table_name);
+    println!("Created table: {}.{}", ns_name, table_name);
     Ok(TableLocationResult {
         location: table.location().to_string(),
         table_was_pre_created: true,
@@ -156,15 +148,7 @@ async fn process_input_files(
     let mut uploads: Vec<(String, String)> = Vec::new();
 
     for file_path in files {
-        let introspection = if is_local_path(file_path) {
-            introspect_local_parquet_file(file_path, None)
-                .await
-                .map_err(|e| format!("Failed to read {}: {}", file_path, e))?
-        } else {
-            introspect_parquet_file(file_io, file_path, None)
-                .await
-                .map_err(|e| format!("Failed to read {}: {}", file_path, e))?
-        };
+        let introspection = introspect_file(file_path, file_io).await?;
 
         if let Err(mismatch_reason) = check_schema_compatibility(schema, &introspection.schema) {
             schema_mismatches.push(SchemaMismatch {
@@ -265,15 +249,7 @@ pub async fn execute(
     let file_io = catalog.file_io();
 
     let exemplar_path = args.exemplar.as_ref().unwrap_or(&files[0]);
-    let exemplar = if is_local_path(exemplar_path) {
-        introspect_local_parquet_file(exemplar_path, None)
-            .await
-            .map_err(|e| format!("Failed to read exemplar file {}: {}", exemplar_path, e))?
-    } else {
-        introspect_parquet_file(file_io, exemplar_path, None)
-            .await
-            .map_err(|e| format!("Failed to read exemplar file {}: {}", exemplar_path, e))?
-    };
+    let exemplar = introspect_file(exemplar_path, file_io).await?;
     let schema = exemplar.schema.clone();
     println!("Schema from: {}", exemplar_path);
 
@@ -310,16 +286,16 @@ pub async fn execute(
     }
 
     let (table_location, table_was_pre_created) = if has_local_files {
-        let ctx = TableContext {
-            catalog: catalog.as_ref(),
-            namespace: &namespace,
-            table_ident: &table_ident,
-            schema: &schema,
-            partition_spec: partition_spec.as_ref(),
-            ns_name: &args.namespace,
-            table_name: &args.table,
-        };
-        let result = resolve_table_location(&ctx, table_exists, args.dry_run).await?;
+        let result = resolve_table_location(
+            catalog.as_ref(),
+            &namespace,
+            &table_ident,
+            &schema,
+            partition_spec.as_ref(),
+            table_exists,
+            args.dry_run,
+        )
+        .await?;
         (result.location, result.table_was_pre_created)
     } else {
         (String::new(), false)

@@ -34,15 +34,15 @@ pub fn parse_type_str(type_str: &str) -> Result<PrimitiveType, String> {
 pub fn parse_partition_spec(spec: &str) -> Result<Vec<(String, PrimitiveType)>, String> {
     spec.split(',')
         .map(|part| {
-            let parts: Vec<&str> = part.trim().splitn(2, ':').collect();
-            if parts.len() != 2 {
-                return Err(format!(
+            let part = part.trim();
+            let (name, type_str) = part.split_once(':').ok_or_else(|| {
+                format!(
                     "Invalid partition spec '{}'. Expected format: name:type",
                     part
-                ));
-            }
-            let parsed_type = parse_type_str(parts[1])?;
-            Ok((parts[0].to_string(), parsed_type))
+                )
+            })?;
+            let parsed_type = parse_type_str(type_str)?;
+            Ok((name.to_string(), parsed_type))
         })
         .collect()
 }
@@ -52,14 +52,14 @@ pub fn parse_partition_values_arg(values: &str) -> Result<HashMap<String, String
     values
         .split(',')
         .map(|part| {
-            let parts: Vec<&str> = part.trim().splitn(2, '=').collect();
-            if parts.len() != 2 {
-                return Err(format!(
+            let part = part.trim();
+            let (name, value) = part.split_once('=').ok_or_else(|| {
+                format!(
                     "Invalid partition value '{}'. Expected format: name=value",
                     part
-                ));
-            }
-            Ok((parts[0].to_string(), parts[1].to_string()))
+                )
+            })?;
+            Ok((name.to_string(), value.to_string()))
         })
         .collect()
 }
@@ -245,4 +245,23 @@ pub async fn upload_local_file(
         .await
         .map_err(|e| format!("Failed to upload to {}: {}", remote_path, e))?;
     Ok(())
+}
+
+/// Introspect a Parquet file (local or remote)
+pub async fn introspect_file(
+    path: &str,
+    file_io: &crate::io::FileIO,
+) -> Result<crate::catalog::register::ParquetIntrospection, String> {
+    use crate::catalog::register::{introspect_local_parquet_file, introspect_parquet_file};
+    use crate::io::is_local_path;
+
+    if is_local_path(path) {
+        introspect_local_parquet_file(path, None)
+            .await
+            .map_err(|e| format!("Failed to read {}: {}", path, e))
+    } else {
+        introspect_parquet_file(file_io, path, None)
+            .await
+            .map_err(|e| format!("Failed to read {}: {}", path, e))
+    }
 }

@@ -180,3 +180,51 @@ fn malformed_partition_value_errors() {
         "unexpected error: {err}"
     );
 }
+
+#[test]
+fn test_parse_hive_partition_values_standalone() {
+    let path = "s3://bucket/year=2024/month=01/data.parquet";
+    let result = super::parse_hive_partition_values(path);
+
+    assert_eq!(result.get("year"), Some(&"2024".to_string()));
+    assert_eq!(result.get("month"), Some(&"01".to_string()));
+    assert_eq!(result.len(), 2);
+}
+
+#[test]
+fn test_parse_hive_partition_values_no_partitions() {
+    let path = "s3://bucket/data/file.parquet";
+    let result = super::parse_hive_partition_values(path);
+
+    assert!(result.is_empty());
+}
+
+#[test]
+fn test_convert_partition_values_to_typed() {
+    use crate::catalog::register::types::PartitionValue;
+
+    // Create a simple schema with year (int) and region (string)
+    let schema = Schema::builder()
+        .with_fields(vec![
+            NestedField::required_field(1, "year".to_string(), Type::Primitive(PrimitiveType::Int)),
+            NestedField::required_field(
+                2,
+                "region".to_string(),
+                Type::Primitive(PrimitiveType::String),
+            ),
+        ])
+        .build()
+        .unwrap();
+
+    let mut raw_values = std::collections::HashMap::new();
+    raw_values.insert("year".to_string(), "2024".to_string());
+    raw_values.insert("region".to_string(), "us-west".to_string());
+
+    let result = super::convert_partition_values(&raw_values, &schema).unwrap();
+
+    assert_eq!(result.get("year"), Some(&PartitionValue::Int(2024)));
+    assert_eq!(
+        result.get("region"),
+        Some(&PartitionValue::String("us-west".to_string()))
+    );
+}

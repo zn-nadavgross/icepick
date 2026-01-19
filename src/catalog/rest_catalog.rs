@@ -239,6 +239,10 @@ fn map_auth_error(err: Error) -> CatalogError {
 #[cfg(not(target_family = "wasm"))]
 #[async_trait]
 impl Catalog for RestCatalog {
+    fn file_io(&self) -> &crate::io::FileIO {
+        self.inner.file_io()
+    }
+
     async fn create_namespace(
         &self,
         namespace: &NamespaceIdent,
@@ -299,6 +303,10 @@ impl Catalog for RestCatalog {
 #[cfg(target_family = "wasm")]
 #[async_trait(?Send)]
 impl Catalog for RestCatalog {
+    fn file_io(&self) -> &crate::io::FileIO {
+        self.inner.file_io()
+    }
+
     async fn create_namespace(
         &self,
         namespace: &NamespaceIdent,

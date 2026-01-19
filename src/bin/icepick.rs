@@ -2,8 +2,8 @@
 
 use clap::{Parser, Subcommand};
 use icepick::cli::commands::{
-    catalog as catalog_cmd, compact as compact_cmd, namespace as namespace_cmd,
-    snapshot as snapshot_cmd, table as table_cmd,
+    catalog as catalog_cmd, commit as commit_cmd, compact as compact_cmd,
+    namespace as namespace_cmd, snapshot as snapshot_cmd, table as table_cmd,
 };
 use icepick::cli::{CatalogConfig, OutputFormat};
 
@@ -48,6 +48,9 @@ enum Commands {
 
     /// Compact a table
     Compact(compact_cmd::CompactArgs),
+
+    /// Commit Parquet files to a table
+    Commit(commit_cmd::CommitArgs),
 }
 
 #[tokio::main]
@@ -73,6 +76,7 @@ async fn main() {
         Commands::Table(cmd) => table_cmd::execute(cmd, &config, cli.output).await,
         Commands::Snapshot(cmd) => snapshot_cmd::execute(cmd, &config, cli.output).await,
         Commands::Compact(args) => compact_cmd::execute(args, &config, cli.output).await,
+        Commands::Commit(args) => commit_cmd::execute(args, &config, cli.output).await,
     };
 
     if let Err(e) = result {

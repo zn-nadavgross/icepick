@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 
 use crate::error::Result;
+use crate::io::FileIO;
 use crate::spec::{NamespaceIdent, TableCreation, TableIdent};
 use crate::table::Table;
 
@@ -12,6 +13,9 @@ use crate::table::Table;
 #[cfg_attr(not(target_family = "wasm"), async_trait)]
 #[cfg_attr(target_family = "wasm", async_trait(?Send))]
 pub trait Catalog: Send + Sync {
+    /// Get the FileIO for reading/writing data files
+    fn file_io(&self) -> &FileIO;
+
     /// Create a namespace (idempotent - returns Ok if already exists)
     async fn create_namespace(
         &self,

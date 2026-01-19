@@ -88,6 +88,22 @@ icepick compact my_namespace.my_table --target-size 268435456
 icepick snapshot list my_namespace.my_table
 icepick snapshot cleanup my_namespace.my_table --dry-run
 icepick snapshot cleanup my_namespace.my_table --older-than-days 7 --retain-last 10
+
+# Commit Parquet files to a table
+icepick commit /data/**/*.parquet --namespace my_ns --table events --dry-run
+icepick commit /data/**/*.parquet --namespace my_ns --table events
+
+# Create new table from Parquet files
+icepick commit /data/**/*.parquet --namespace my_ns --table events \
+  --create --partition year:int,month:int
+
+# Specify explicit partition values (for non-Hive paths)
+icepick commit /flat/*.parquet --namespace my_ns --table events \
+  --partition-values year=2024,month=01
+
+# Use specific file as schema exemplar
+icepick commit /data/**/*.parquet --namespace my_ns --table events \
+  --exemplar /data/sample.parquet --create
 ```
 
 ## CORE CONCEPTS
@@ -361,6 +377,29 @@ if !plan.snapshots_to_remove.is_empty() {
     let result = execute_snapshot_cleanup(&table, &catalog, plan).await?;
     println!("Removed {} snapshots", result.snapshots_removed);
 }
+```
+
+### Pattern 9: Committing Parquet files
+
+```rust
+use icepick::catalog::register::{
+    introspect_parquet_file, parse_hive_partition_values, convert_partition_values,
+    register_data_files, RegisterOptions,
+};
+
+// Introspect a Parquet file (without partition extraction)
+let introspection = introspect_parquet_file(file_io, path, None).await?;
+
+// Extract partition values from Hive-style path
+let hive_values = parse_hive_partition_values(path);  // HashMap<String, String>
+
+// Convert to typed values using schema
+let typed_values = convert_partition_values(&hive_values, &schema)?;
+
+// Or provide explicit values
+let mut explicit = HashMap::new();
+explicit.insert("year".to_string(), "2024".to_string());
+let typed_values = convert_partition_values(&explicit, &schema)?;
 ```
 
 ## INTEGRATION POINTS

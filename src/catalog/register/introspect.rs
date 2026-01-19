@@ -131,6 +131,33 @@ pub struct ParquetIntrospection {
     pub partition_values: Option<HashMap<String, PartitionValue>>,
 }
 
+/// Introspect a local Parquet file on the filesystem.
+///
+/// This is a convenience wrapper for CLI use that creates a local FileIO
+/// and calls `introspect_parquet_file`. The returned `DataFileInput` will
+/// have `file_path` set to the original local path - callers should update
+/// this to the remote path after uploading.
+///
+/// # Arguments
+/// * `path` - Absolute path to a local Parquet file
+/// * `partition_spec` - Optional partition spec for extracting Hive-style partition values
+#[cfg(not(target_family = "wasm"))]
+pub async fn introspect_local_parquet_file(
+    path: &str,
+    partition_spec: Option<&PartitionSpec>,
+) -> Result<ParquetIntrospection> {
+    use crate::io::local::{create_local_file_io, get_filename};
+
+    let local_file_io = create_local_file_io(path)?;
+    let filename = get_filename(path);
+    let mut result = introspect_parquet_file(&local_file_io, filename, partition_spec).await?;
+
+    // Restore the original full path (introspect_parquet_file only sees the filename)
+    result.data_file.file_path = path.to_string();
+
+    Ok(result)
+}
+
 /// Infer partition values from a path like `col1=value1/col2=5/part-000.parquet`.
 ///
 /// This is intentionally strict when a partition spec is provided:
@@ -169,7 +196,18 @@ pub fn infer_partition_values_from_path(
 }
 
 /// Extract Hive-style `key=value` segments from a path.
-fn parse_hive_partition_values(path: &str) -> HashMap<String, String> {
+///
+/// Returns a map of partition column names to their string values.
+/// Does not validate against any schema or partition spec.
+///
+/// # Example
+/// ```
+/// use icepick::catalog::register::parse_hive_partition_values;
+///
+/// let values = parse_hive_partition_values("s3://bucket/year=2024/month=01/file.parquet");
+/// assert_eq!(values.get("year"), Some(&"2024".to_string()));
+/// ```
+pub fn parse_hive_partition_values(path: &str) -> HashMap<String, String> {
     path.rsplit_once('/')
         .map(|(dirs, file)| (dirs, Some(file)))
         .unwrap_or((path, None))
@@ -185,6 +223,72 @@ fn parse_hive_partition_values(path: &str) -> HashMap<String, String> {
             }
         })
         .collect()
+}
+
+/// Convert raw string partition values to typed PartitionValue based on schema.
+///
+/// Looks up each partition column in the schema to determine the correct type.
+/// Unknown columns are treated as strings.
+///
+/// # Example
+/// ```
+/// use icepick::catalog::register::convert_partition_values;
+/// use icepick::catalog::register::PartitionValue;
+/// use icepick::spec::{NestedField, PrimitiveType, Schema, Type};
+/// use std::collections::HashMap;
+///
+/// let schema = Schema::builder()
+///     .with_fields(vec![
+///         NestedField::required_field(1, "year".to_string(), Type::Primitive(PrimitiveType::Int)),
+///     ])
+///     .build()
+///     .unwrap();
+///
+/// let mut raw = HashMap::new();
+/// raw.insert("year".to_string(), "2024".to_string());
+///
+/// let typed = convert_partition_values(&raw, &schema).unwrap();
+/// assert_eq!(typed.get("year"), Some(&PartitionValue::Int(2024)));
+/// ```
+pub fn convert_partition_values(
+    raw_values: &HashMap<String, String>,
+    schema: &Schema,
+) -> Result<HashMap<String, PartitionValue>> {
+    let mut typed_values = HashMap::new();
+
+    for (name, raw) in raw_values {
+        let value = match schema.fields().iter().find(|f| f.name() == name) {
+            Some(field) => parse_value_by_type(field.field_type(), raw)?,
+            None => PartitionValue::String(raw.clone()),
+        };
+        typed_values.insert(name.clone(), value);
+    }
+
+    Ok(typed_values)
+}
+
+fn parse_value_by_type(field_type: &crate::spec::Type, raw: &str) -> Result<PartitionValue> {
+    use crate::spec::PrimitiveType;
+
+    match field_type {
+        crate::spec::Type::Primitive(PrimitiveType::Boolean) => raw
+            .parse::<bool>()
+            .map(PartitionValue::Bool)
+            .map_err(|e| Error::invalid_input(format!("Invalid boolean '{}': {}", raw, e))),
+        crate::spec::Type::Primitive(PrimitiveType::Int)
+        | crate::spec::Type::Primitive(PrimitiveType::Date) => raw
+            .parse::<i32>()
+            .map(PartitionValue::Int)
+            .map_err(|e| Error::invalid_input(format!("Invalid int '{}': {}", raw, e))),
+        crate::spec::Type::Primitive(PrimitiveType::Long)
+        | crate::spec::Type::Primitive(PrimitiveType::Time)
+        | crate::spec::Type::Primitive(PrimitiveType::Timestamp)
+        | crate::spec::Type::Primitive(PrimitiveType::Timestamptz) => raw
+            .parse::<i64>()
+            .map(PartitionValue::Long)
+            .map_err(|e| Error::invalid_input(format!("Invalid long '{}': {}", raw, e))),
+        _ => Ok(PartitionValue::String(raw.to_string())),
+    }
 }
 
 fn parse_partition_value(

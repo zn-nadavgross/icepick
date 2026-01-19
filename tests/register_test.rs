@@ -9,18 +9,25 @@ use tokio::sync::RwLock;
 
 struct RefreshingCatalog {
     table: RwLock<icepick::table::Table>,
+    file_io: FileIO,
 }
 
 impl RefreshingCatalog {
     fn new(table: icepick::table::Table) -> Self {
+        let file_io = table.file_io().clone();
         Self {
             table: RwLock::new(table),
+            file_io,
         }
     }
 }
 
 #[async_trait::async_trait]
 impl icepick::catalog::Catalog for RefreshingCatalog {
+    fn file_io(&self) -> &FileIO {
+        &self.file_io
+    }
+
     async fn create_namespace(
         &self,
         _namespace: &NamespaceIdent,

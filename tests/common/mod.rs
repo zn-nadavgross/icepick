@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use async_trait::async_trait;
 use icepick::catalog::Catalog;
 use icepick::error::{Error, Result};
+use icepick::io::FileIO;
 use icepick::spec::{NamespaceIdent, TableCreation, TableIdent};
 use icepick::table::Table;
 use tokio::sync::{Mutex, RwLock};
@@ -11,6 +12,7 @@ use tokio::sync::{Mutex, RwLock};
 /// Simple in-memory catalog used by integration tests
 pub struct TestCatalog {
     table: RwLock<Table>,
+    file_io: FileIO,
     updates: Mutex<Vec<(String, String)>>,
     fail_next_update: AtomicBool,
     load_calls: AtomicUsize,
@@ -18,8 +20,11 @@ pub struct TestCatalog {
 
 impl TestCatalog {
     pub fn new(table: Table) -> Self {
+        // Use the table's FileIO for this catalog
+        let file_io = table.file_io().clone();
         Self {
             table: RwLock::new(table),
+            file_io,
             updates: Mutex::new(Vec::new()),
             fail_next_update: AtomicBool::new(false),
             load_calls: AtomicUsize::new(0),
@@ -46,6 +51,10 @@ impl TestCatalog {
 
 #[async_trait]
 impl Catalog for TestCatalog {
+    fn file_io(&self) -> &FileIO {
+        &self.file_io
+    }
+
     async fn create_namespace(
         &self,
         _namespace: &NamespaceIdent,

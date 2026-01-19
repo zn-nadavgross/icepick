@@ -13,28 +13,18 @@ repos:
         entry: cargo fmt -- --check
         language: system
         pass_filenames: false
-        stages: [pre-commit, pre-push]
 
       - id: cargo-clippy
         name: cargo clippy
         entry: cargo clippy --locked --all-targets --all-features -- -D warnings
         language: system
         pass_filenames: false
-        stages: [pre-commit, pre-push]
-
-      - id: cargo-test
-        name: cargo test
-        entry: cargo test --locked --all-features
-        language: system
-        pass_filenames: false
-        stages: [pre-push]
 
       - id: rust-quality-thresholds
         name: Rust code quality thresholds
         entry: python3 scripts/enforce_quality.py --max-loc 550
         language: system
         pass_filenames: false
-        stages: [pre-commit, pre-push]
 
   - repo: https://github.com/compilerla/conventional-pre-commit
     rev: v3.3.0

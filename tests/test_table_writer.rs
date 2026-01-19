@@ -35,6 +35,10 @@ impl SimpleCatalog {
 
 #[async_trait::async_trait]
 impl Catalog for SimpleCatalog {
+    fn file_io(&self) -> &icepick::io::FileIO {
+        &self.file_io
+    }
+
     async fn create_namespace(
         &self,
         _namespace: &NamespaceIdent,

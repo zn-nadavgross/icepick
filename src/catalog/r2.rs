@@ -244,6 +244,10 @@ impl R2Catalog {
 #[cfg(not(target_family = "wasm"))]
 #[async_trait]
 impl Catalog for R2Catalog {
+    fn file_io(&self) -> &crate::io::FileIO {
+        self.inner.file_io()
+    }
+
     async fn create_namespace(
         &self,
         namespace: &NamespaceIdent,
@@ -300,6 +304,10 @@ impl Catalog for R2Catalog {
 #[cfg(target_family = "wasm")]
 #[async_trait(?Send)]
 impl Catalog for R2Catalog {
+    fn file_io(&self) -> &crate::io::FileIO {
+        self.inner.file_io()
+    }
+
     async fn create_namespace(
         &self,
         namespace: &NamespaceIdent,

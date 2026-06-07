@@ -129,43 +129,7 @@ pub async fn write_manifest_with_entries(
     let schema = manifest_entry_schema_v2(partition_spec, iceberg_schema)?;
 
     let mut writer = Writer::new(&schema, Vec::new());
-
-    // Iceberg's ManifestReader pulls table schema and partition spec from the
-    // Avro file's user metadata; without these keys Trino's iceberg lib NPEs
-    // in SchemaParser.fromJson when listing the table's $files.
-    let schema_json = serde_json::to_string(iceberg_schema).map_err(|e| {
-        crate::error::Error::InvalidInput(format!("Failed to serialize schema: {}", e))
-    })?;
-    let partition_spec_fields_json = serde_json::to_string(partition_spec.fields())
-        .map_err(|e| {
-            crate::error::Error::InvalidInput(format!(
-                "Failed to serialize partition spec fields: {}",
-                e
-            ))
-        })?;
-    let add_meta = |w: &mut Writer<Vec<u8>>, name: &str, value: String| -> Result<()> {
-        w.add_user_metadata(name.to_string(), value.as_bytes())
-            .map_err(|e| {
-                crate::error::Error::InvalidInput(format!(
-                    "Failed to add Avro user metadata '{}': {}",
-                    name, e
-                ))
-            })?;
-        Ok(())
-    };
-    add_meta(&mut writer, "schema", schema_json)?;
-    add_meta(
-        &mut writer,
-        "partition-spec",
-        partition_spec_fields_json,
-    )?;
-    add_meta(
-        &mut writer,
-        "partition-spec-id",
-        partition_spec.spec_id().to_string(),
-    )?;
-    add_meta(&mut writer, "format-version", "2".to_string())?;
-    add_meta(&mut writer, "content", "data".to_string())?;
+    set_manifest_user_metadata(&mut writer, partition_spec, iceberg_schema)?;
 
     for entry in entries {
         let data_file_value =
@@ -313,6 +277,44 @@ pub async fn write_manifest_list(
 
     file_io.write(path, avro_bytes).await?;
 
+    Ok(())
+}
+
+/// Set the Iceberg-required user metadata on a manifest Avro writer before
+/// any entries are appended. ManifestReader (Trino, Spark) pulls table schema
+/// and partition spec from these keys at file-open time; missing them causes
+/// NPE in SchemaParser.fromJson.
+pub(crate) fn set_manifest_user_metadata(
+    writer: &mut Writer<Vec<u8>>,
+    partition_spec: &PartitionSpec,
+    iceberg_schema: &IcebergSchema,
+) -> Result<()> {
+    let schema_json = serde_json::to_string(iceberg_schema).map_err(|e| {
+        crate::error::Error::InvalidInput(format!("Failed to serialize schema: {}", e))
+    })?;
+    let partition_spec_fields_json = serde_json::to_string(partition_spec.fields())
+        .map_err(|e| {
+            crate::error::Error::InvalidInput(format!(
+                "Failed to serialize partition spec fields: {}",
+                e
+            ))
+        })?;
+    let mut add = |name: &str, value: String| -> Result<()> {
+        writer
+            .add_user_metadata(name.to_string(), value.as_bytes())
+            .map_err(|e| {
+                crate::error::Error::InvalidInput(format!(
+                    "Failed to add Avro user metadata '{}': {}",
+                    name, e
+                ))
+            })?;
+        Ok(())
+    };
+    add("schema", schema_json)?;
+    add("partition-spec", partition_spec_fields_json)?;
+    add("partition-spec-id", partition_spec.spec_id().to_string())?;
+    add("format-version", "2".to_string())?;
+    add("content", "data".to_string())?;
     Ok(())
 }
 

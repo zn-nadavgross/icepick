@@ -10,6 +10,7 @@
 //! - Writers for manifest and manifest list files
 
 pub mod avro;
+pub mod rewriter;
 pub mod schema;
 pub mod writer;
 

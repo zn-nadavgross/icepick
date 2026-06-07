@@ -2,6 +2,7 @@
 
 use crate::commit::paths::{manifest_list_path, manifest_path, next_metadata_path};
 use crate::error::{Error, Result};
+use crate::manifest::rewriter::{rewrite_manifest, RewriteOutcome};
 use crate::manifest::writer::{
     write_manifest_list, write_manifest_with_entries, FieldSummary, ManifestEntry,
     ManifestEntryStatus, ManifestListEntry,
@@ -9,6 +10,7 @@ use crate::manifest::writer::{
 use crate::reader::ManifestListReader;
 use crate::spec::{DataFile, Snapshot, Summary};
 use crate::transaction::{Transaction, TransactionOperation};
+use std::collections::HashSet;
 use tracing::debug;
 use uuid::Uuid;
 
@@ -132,53 +134,72 @@ pub async fn try_commit(
     );
     let commit_uuid = Uuid::new_v4().to_string().replace('-', "");
 
-    // 1. Write manifest file with entries
-    let manifest_file_path = manifest_path(table.location(), &commit_uuid, 0);
+    // Files we're removing in this commit. Used to drop the matching manifest
+    // entries from rewritten parent manifests — we no longer write DELETE
+    // entries (that approach left files referenced and broke orphan cleanup).
+    let drop_set: HashSet<String> = stats
+        .files_to_delete
+        .iter()
+        .map(|f| f.file_path().to_string())
+        .collect();
 
-    // Create manifest entries with appropriate status
-    let mut manifest_entries_to_write: Vec<ManifestEntry> = Vec::new();
-
-    // Add deleted entries first (for rewrite operations)
-    for file in &stats.files_to_delete {
-        manifest_entries_to_write.push(ManifestEntry {
-            data_file: file.clone(),
-            status: ManifestEntryStatus::Deleted,
-        });
-    }
-
-    // Add new entries
-    for file in &stats.files_to_add {
-        manifest_entries_to_write.push(ManifestEntry {
-            data_file: file.clone(),
-            status: ManifestEntryStatus::Added,
-        });
-    }
-
-    let manifest_bytes = write_manifest_with_entries(
-        file_io,
-        &manifest_file_path,
-        &manifest_entries_to_write,
-        snapshot_id,
-        sequence_number,
-        &current_spec,
-        current_schema,
-    )
-    .await?;
-
-    // 2. Build manifest list entries
-    let manifest_list_file_path = manifest_list_path(table.location(), snapshot_id, &commit_uuid);
+    // 1. Write the new manifest holding only ADDED entries (the compaction
+    // output, or whatever's being appended). If there's nothing to add we
+    // skip writing a new manifest — the commit then consists purely of
+    // dropping entries from rewritten parent manifests.
     let added_files_count = stats.files_to_add.len() as i32;
     let added_rows_count: i64 = stats.files_to_add.iter().map(|f| f.record_count()).sum();
     let deleted_files_count = stats.files_to_delete.len() as i32;
     let deleted_rows_count: i64 = stats.files_to_delete.iter().map(|f| f.record_count()).sum();
 
-    let mut manifest_list_entries = Vec::new();
-
-    // Track totals for summary
+    let mut manifest_list_entries: Vec<ManifestListEntry> = Vec::new();
     let mut total_existing_files: i64 = 0;
     let mut total_existing_rows: i64 = 0;
 
-    // 2a. Carry forward manifests from parent snapshot (if exists)
+    if !stats.files_to_add.is_empty() {
+        let manifest_file_path = manifest_path(table.location(), &commit_uuid, 0);
+        let manifest_entries_to_write: Vec<ManifestEntry> = stats
+            .files_to_add
+            .iter()
+            .map(|file| ManifestEntry {
+                data_file: file.clone(),
+                status: ManifestEntryStatus::Added,
+            })
+            .collect();
+        let manifest_bytes = write_manifest_with_entries(
+            file_io,
+            &manifest_file_path,
+            &manifest_entries_to_write,
+            snapshot_id,
+            sequence_number,
+            &current_spec,
+            current_schema,
+        )
+        .await?;
+        manifest_list_entries.push(ManifestListEntry {
+            manifest_path: manifest_file_path,
+            manifest_length: manifest_bytes,
+            partition_spec_id: current_spec_id,
+            content: 0,
+            sequence_number,
+            min_sequence_number: sequence_number,
+            added_snapshot_id: snapshot_id,
+            added_files_count,
+            existing_files_count: 0,
+            deleted_files_count: 0,
+            added_rows_count,
+            existing_rows_count: 0,
+            deleted_rows_count: 0,
+            partitions: vec![FieldSummary::default(); current_spec_field_count],
+        });
+    }
+
+    // 2. Walk parent manifests. For each one, if any of the files we're
+    // dropping live inside it, rewrite the manifest without those entries.
+    // Otherwise carry the original manifest reference forward verbatim. This
+    // mirrors Spark's RewriteFiles pattern — files we remove become genuinely
+    // unreferenced after this commit, so orphan cleanup can reclaim their
+    // storage. DELETE-status manifest entries are no longer written.
     if let Some(parent_snapshot) = table.current_snapshot() {
         debug!(
             "Reading parent manifest list from: {}",
@@ -187,61 +208,74 @@ pub async fn try_commit(
         let parent_manifest_infos =
             ManifestListReader::read_entries(file_io, parent_snapshot.manifest_list()).await?;
 
-        for parent_info in parent_manifest_infos {
-            // Calculate how many files/rows are still valid (not deleted)
+        for (idx, parent_info) in parent_manifest_infos.into_iter().enumerate() {
             let parent_total_files =
                 parent_info.added_files_count + parent_info.existing_files_count;
             let parent_total_rows = parent_info.added_rows_count + parent_info.existing_rows_count;
 
-            // For now, we carry forward all parent manifests as existing
-            // The deleted files are tracked in our new manifest
-            let existing_entry = ManifestListEntry {
-                manifest_path: parent_info.manifest_path,
-                manifest_length: parent_info.manifest_length,
-                partition_spec_id: parent_info.partition_spec_id,
-                content: parent_info.content,
-                sequence_number: parent_info.sequence_number,
-                min_sequence_number: parent_info.min_sequence_number,
-                added_snapshot_id: parent_info.added_snapshot_id,
-                added_files_count: 0,
-                existing_files_count: parent_total_files,
-                deleted_files_count: parent_info.deleted_files_count,
-                added_rows_count: 0,
-                existing_rows_count: parent_total_rows,
-                deleted_rows_count: parent_info.deleted_rows_count,
-                partitions: parent_info.partitions,
-            };
+            if drop_set.is_empty() {
+                // Pure append commit — never rewrite parents.
+                manifest_list_entries.push(carry_forward_entry(&parent_info, parent_total_files, parent_total_rows));
+                total_existing_files += parent_total_files as i64;
+                total_existing_rows += parent_total_rows;
+                continue;
+            }
 
-            total_existing_files += parent_total_files as i64;
-            total_existing_rows += parent_total_rows;
-
-            manifest_list_entries.push(existing_entry);
+            let rewrite_target = manifest_path(table.location(), &commit_uuid, idx + 1);
+            match rewrite_manifest(
+                file_io,
+                &parent_info.manifest_path,
+                &rewrite_target,
+                &drop_set,
+                &current_spec,
+                current_schema,
+            )
+            .await?
+            {
+                RewriteOutcome::Unchanged => {
+                    manifest_list_entries.push(carry_forward_entry(&parent_info, parent_total_files, parent_total_rows));
+                    total_existing_files += parent_total_files as i64;
+                    total_existing_rows += parent_total_rows;
+                }
+                RewriteOutcome::Rewritten(result) => {
+                    let rewritten_entry = ManifestListEntry {
+                        manifest_path: result.target_path,
+                        manifest_length: result.manifest_length,
+                        partition_spec_id: parent_info.partition_spec_id,
+                        content: parent_info.content,
+                        sequence_number: parent_info.sequence_number,
+                        min_sequence_number: parent_info.min_sequence_number,
+                        added_snapshot_id: parent_info.added_snapshot_id,
+                        added_files_count: 0,
+                        existing_files_count: result.existing_files_count,
+                        deleted_files_count: 0,
+                        added_rows_count: 0,
+                        existing_rows_count: result.existing_rows_count,
+                        deleted_rows_count: 0,
+                        partitions: parent_info.partitions,
+                    };
+                    total_existing_files += result.existing_files_count as i64;
+                    total_existing_rows += result.existing_rows_count;
+                    manifest_list_entries.push(rewritten_entry);
+                }
+                RewriteOutcome::EmptyAfterDrop => {
+                    debug!(
+                        "Parent manifest {} fully drained by drop set; omitting from new manifest list",
+                        parent_info.manifest_path
+                    );
+                }
+            }
         }
-
-        debug!(
-            "Carried forward {} manifests from parent snapshot",
-            manifest_list_entries.len()
-        );
     }
 
-    // 2b. Add the new manifest entry
-    let new_manifest_entry = ManifestListEntry {
-        manifest_path: manifest_file_path.clone(),
-        manifest_length: manifest_bytes,
-        partition_spec_id: current_spec_id,
-        content: 0, // 0 = DATA
-        sequence_number,
-        min_sequence_number: sequence_number,
-        added_snapshot_id: snapshot_id,
-        added_files_count,
-        existing_files_count: 0,
-        deleted_files_count,
-        added_rows_count,
-        existing_rows_count: 0,
-        deleted_rows_count,
-        partitions: vec![FieldSummary::default(); current_spec_field_count],
-    };
-    manifest_list_entries.push(new_manifest_entry);
+    if manifest_list_entries.is_empty() {
+        return Err(Error::InvalidInput(
+            "Commit produced no manifest list entries — refusing to write empty snapshot"
+                .to_string(),
+        ));
+    }
+
+    let manifest_list_file_path = manifest_list_path(table.location(), snapshot_id, &commit_uuid);
 
     debug!(
         "Writing manifest list with {} entries total",
@@ -365,4 +399,30 @@ pub async fn commit_transaction(
     }
 
     unreachable!("Loop should always return within MAX_RETRIES iterations")
+}
+
+/// Reference a parent manifest unchanged in the new manifest list, flipping
+/// its ADDED counts into EXISTING since from this commit's perspective those
+/// files were added by a prior snapshot.
+fn carry_forward_entry(
+    parent_info: &crate::reader::manifest::ManifestFileInfo,
+    parent_total_files: i32,
+    parent_total_rows: i64,
+) -> ManifestListEntry {
+    ManifestListEntry {
+        manifest_path: parent_info.manifest_path.clone(),
+        manifest_length: parent_info.manifest_length,
+        partition_spec_id: parent_info.partition_spec_id,
+        content: parent_info.content,
+        sequence_number: parent_info.sequence_number,
+        min_sequence_number: parent_info.min_sequence_number,
+        added_snapshot_id: parent_info.added_snapshot_id,
+        added_files_count: 0,
+        existing_files_count: parent_total_files,
+        deleted_files_count: parent_info.deleted_files_count,
+        added_rows_count: 0,
+        existing_rows_count: parent_total_rows,
+        deleted_rows_count: parent_info.deleted_rows_count,
+        partitions: parent_info.partitions.clone(),
+    }
 }

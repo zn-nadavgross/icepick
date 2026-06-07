@@ -149,9 +149,11 @@ pub fn data_file_to_avro(
             Value::Union(0, Box::new(Value::Null))
         },
     ));
+    // Iceberg v2 manifest readers (Trino's $entries) treat sort_order_id as a
+    // non-null int when present; emit 0 (unsorted) rather than null.
     fields.push((
         "sort_order_id".to_string(),
-        Value::Union(0, Box::new(Value::Null)),
+        Value::Union(1, Box::new(Value::Int(0))),
     ));
 
     Ok(Value::Record(fields))

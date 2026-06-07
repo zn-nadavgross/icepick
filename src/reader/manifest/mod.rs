@@ -2,6 +2,8 @@
 
 use std::collections::HashMap;
 
+use crate::manifest::FieldSummary;
+
 mod extract;
 mod file;
 mod list;
@@ -75,4 +77,8 @@ pub struct ManifestFileInfo {
     pub existing_rows_count: i64,
     /// Number of deleted rows
     pub deleted_rows_count: i64,
+    /// Per-partition-field summaries from the manifest list entry. Must be
+    /// carried forward verbatim when rewriting manifest lists so partition spec
+    /// readers (Trino, etc.) see the correct number of field entries.
+    pub partitions: Vec<FieldSummary>,
 }

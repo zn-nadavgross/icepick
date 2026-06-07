@@ -3,8 +3,8 @@
 use crate::commit::paths::{manifest_list_path, manifest_path, next_metadata_path};
 use crate::error::{Error, Result};
 use crate::manifest::writer::{
-    write_manifest_list, write_manifest_with_entries, ManifestEntry, ManifestEntryStatus,
-    ManifestListEntry,
+    write_manifest_list, write_manifest_with_entries, FieldSummary, ManifestEntry,
+    ManifestEntryStatus, ManifestListEntry,
 };
 use crate::reader::ManifestListReader;
 use crate::spec::{DataFile, Snapshot, Summary};
@@ -98,6 +98,18 @@ pub async fn try_commit(
 
     // Collect operation statistics
     let stats = collect_operation_stats(transaction)?;
+
+    // Pick the current partition spec. icepick doesn't parse `default-spec-id`,
+    // so fall back to the spec with the highest id (newest); for tables with a
+    // single spec this is the only one. For unpartitioned tables, fields() is
+    // empty and `partitions` stays []. This count MUST match readers like
+    // Trino, which iterate by partition spec field index.
+    let (current_spec_id, current_spec_field_count) = metadata
+        .partition_specs()
+        .iter()
+        .max_by_key(|s| s.spec_id())
+        .map(|s| (s.spec_id(), s.fields().len()))
+        .unwrap_or((0, 0));
 
     // Generate IDs
     let snapshot_id = generate_snapshot_id(table);
@@ -193,6 +205,7 @@ pub async fn try_commit(
                 added_rows_count: 0,
                 existing_rows_count: parent_total_rows,
                 deleted_rows_count: parent_info.deleted_rows_count,
+                partitions: parent_info.partitions,
             };
 
             total_existing_files += parent_total_files as i64;
@@ -211,7 +224,7 @@ pub async fn try_commit(
     let new_manifest_entry = ManifestListEntry {
         manifest_path: manifest_file_path.clone(),
         manifest_length: manifest_bytes,
-        partition_spec_id: 0,
+        partition_spec_id: current_spec_id,
         content: 0, // 0 = DATA
         sequence_number,
         min_sequence_number: sequence_number,
@@ -222,6 +235,7 @@ pub async fn try_commit(
         added_rows_count,
         existing_rows_count: 0,
         deleted_rows_count,
+        partitions: vec![FieldSummary::default(); current_spec_field_count],
     };
     manifest_list_entries.push(new_manifest_entry);
 

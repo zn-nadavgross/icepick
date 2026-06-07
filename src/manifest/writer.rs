@@ -35,6 +35,17 @@ pub struct ManifestEntry {
     pub status: ManifestEntryStatus,
 }
 
+/// Per-partition-field summary written into manifest list entries. One entry
+/// per field in the partition spec referenced by `partition_spec_id`; the
+/// length must match the spec or readers like Trino throw OOB.
+#[derive(Debug, Clone, Default)]
+pub struct FieldSummary {
+    pub contains_null: bool,
+    pub contains_nan: Option<bool>,
+    pub lower_bound: Option<Vec<u8>>,
+    pub upper_bound: Option<Vec<u8>>,
+}
+
 /// Represents an entry in a manifest list
 #[derive(Debug, Clone)]
 pub struct ManifestListEntry {
@@ -64,6 +75,9 @@ pub struct ManifestListEntry {
     pub existing_rows_count: i64,
     /// Number of deleted rows
     pub deleted_rows_count: i64,
+    /// Per-field partition summaries; must have one entry per field in the
+    /// partition spec referenced by `partition_spec_id`.
+    pub partitions: Vec<FieldSummary>,
 }
 
 /// Write a manifest file containing data file entries
@@ -204,14 +218,15 @@ pub async fn write_manifest_list(
                 "deleted_rows_count".to_string(),
                 Value::Long(entry.deleted_rows_count),
             ),
-            // TODO: Support partitioned tables
-            // Currently icepick only writes unpartitioned data (partition_spec_id=0),
-            // so partitions is always an empty array. When partition support is added,
-            // this should contain field summaries (min/max values for each partition field).
-            // Using empty array instead of null is required for DuckDB compatibility.
+            // For partitioned tables this must contain one field summary per
+            // partition spec field, or Trino throws ArrayIndexOutOfBoundsException
+            // when iterating field indices. Using empty array instead of null is
+            // required for DuckDB compatibility.
             (
                 "partitions".to_string(),
-                Value::Union(1, Box::new(Value::Array(vec![]))),
+                Value::Union(1, Box::new(Value::Array(
+                    entry.partitions.iter().map(field_summary_to_avro).collect(),
+                ))),
             ),
             (
                 "key_metadata".to_string(),
@@ -231,4 +246,28 @@ pub async fn write_manifest_list(
     file_io.write(path, avro_bytes).await?;
 
     Ok(())
+}
+
+fn field_summary_to_avro(summary: &FieldSummary) -> Value {
+    let contains_nan = match summary.contains_nan {
+        Some(b) => Value::Union(1, Box::new(Value::Boolean(b))),
+        None => Value::Union(0, Box::new(Value::Null)),
+    };
+    let lower_bound = match &summary.lower_bound {
+        Some(bytes) => Value::Union(1, Box::new(Value::Bytes(bytes.clone()))),
+        None => Value::Union(0, Box::new(Value::Null)),
+    };
+    let upper_bound = match &summary.upper_bound {
+        Some(bytes) => Value::Union(1, Box::new(Value::Bytes(bytes.clone()))),
+        None => Value::Union(0, Box::new(Value::Null)),
+    };
+    Value::Record(vec![
+        (
+            "contains_null".to_string(),
+            Value::Boolean(summary.contains_null),
+        ),
+        ("contains_nan".to_string(), contains_nan),
+        ("lower_bound".to_string(), lower_bound),
+        ("upper_bound".to_string(), upper_bound),
+    ])
 }

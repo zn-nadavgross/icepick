@@ -57,6 +57,7 @@ async fn test_write_manifest_list() {
         added_rows_count,
         existing_rows_count: 0,
         deleted_rows_count: 0,
+        partitions: Vec::new(),
     };
 
     write_manifest_list(&file_io, list_path, vec![entry.clone()])
@@ -176,6 +177,7 @@ async fn test_manifest_list_partitions_field_is_empty_array_for_unpartitioned_ta
         added_rows_count: 500,
         existing_rows_count: 0,
         deleted_rows_count: 0,
+        partitions: Vec::new(),
     };
 
     let list_path = "metadata/snap-1-partitions-test.avro";

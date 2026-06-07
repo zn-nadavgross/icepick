@@ -3,6 +3,7 @@
 use super::extract::*;
 use super::{DataFileEntry, DataFileStats, ManifestFileInfo};
 use crate::error::{Error, Result};
+use crate::manifest::FieldSummary;
 use apache_avro::types::Value;
 use std::collections::HashMap;
 
@@ -38,6 +39,7 @@ pub(super) fn parse_manifest_file_info(fields: Vec<(String, Value)>) -> Result<M
             "deleted_rows_count" => {
                 info.deleted_rows_count = extract_long(&field_value).unwrap_or(0)
             }
+            "partitions" => info.partitions = parse_field_summaries(&field_value),
             _ => {}
         }
     }
@@ -160,4 +162,56 @@ pub(super) fn parse_data_file_stats(fields: Vec<(String, Value)>) -> Result<Data
         null_value_counts,
         value_counts,
     })
+}
+
+/// Parse the manifest list `partitions` field (array of field_summary records).
+pub(super) fn parse_field_summaries(value: &Value) -> Vec<FieldSummary> {
+    let inner = match value {
+        Value::Union(_, boxed) => boxed.as_ref(),
+        other => other,
+    };
+    let Value::Array(items) = inner else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|item| {
+            let Value::Record(fields) = item else {
+                return None;
+            };
+            let mut summary = FieldSummary::default();
+            for (name, val) in fields {
+                match name.as_str() {
+                    "contains_null" => {
+                        if let Value::Boolean(b) = val {
+                            summary.contains_null = *b;
+                        }
+                    }
+                    "contains_nan" => {
+                        if let Value::Union(_, boxed) = val {
+                            if let Value::Boolean(b) = boxed.as_ref() {
+                                summary.contains_nan = Some(*b);
+                            }
+                        }
+                    }
+                    "lower_bound" => {
+                        if let Value::Union(_, boxed) = val {
+                            if let Value::Bytes(b) = boxed.as_ref() {
+                                summary.lower_bound = Some(b.clone());
+                            }
+                        }
+                    }
+                    "upper_bound" => {
+                        if let Value::Union(_, boxed) = val {
+                            if let Value::Bytes(b) = boxed.as_ref() {
+                                summary.upper_bound = Some(b.clone());
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Some(summary)
+        })
+        .collect()
 }

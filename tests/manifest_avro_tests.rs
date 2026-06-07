@@ -1,6 +1,14 @@
 use icepick::manifest::avro::data_file_to_avro;
-use icepick::spec::DataFile;
+use icepick::spec::{DataFile, PartitionSpec, Schema};
 use std::collections::HashMap;
+
+fn empty_spec() -> PartitionSpec {
+    PartitionSpec::new(0, Vec::new())
+}
+
+fn empty_schema() -> Schema {
+    Schema::builder().with_fields(Vec::new()).build().unwrap()
+}
 
 #[test]
 fn test_data_file_to_avro_minimal() {
@@ -13,9 +21,8 @@ fn test_data_file_to_avro_minimal() {
         .build()
         .unwrap();
 
-    let avro_value = data_file_to_avro(&data_file).unwrap();
+    let avro_value = data_file_to_avro(&data_file, &empty_spec(), &empty_schema()).unwrap();
 
-    // Verify it's a Record
     if let apache_avro::types::Value::Record(fields) = avro_value {
         let file_path = fields.iter().find(|(k, _)| k == "file_path");
         assert!(file_path.is_some());
@@ -45,9 +52,8 @@ fn test_data_file_to_avro_with_stats() {
         .build()
         .unwrap();
 
-    let avro_value = data_file_to_avro(&data_file).unwrap();
+    let avro_value = data_file_to_avro(&data_file, &empty_spec(), &empty_schema()).unwrap();
 
-    // Verify it's a Record with stats
     if let apache_avro::types::Value::Record(fields) = avro_value {
         let lower_bounds = fields.iter().find(|(k, _)| k == "lower_bounds");
         assert!(lower_bounds.is_some());

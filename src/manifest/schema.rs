@@ -1,17 +1,48 @@
 //! Avro schemas for Iceberg manifest files (v2 format)
 
+use crate::error::Result;
+use crate::manifest::avro::{partition_field_result_type, partition_result_avro_name};
+use crate::spec::{PartitionSpec, Schema as IcebergSchema};
 use apache_avro::Schema;
 
-/// Returns the Avro schema for manifest entries in Iceberg v2 format
+/// Returns the Avro schema for manifest entries in Iceberg v2 format.
 ///
-/// # Example
-/// ```
-/// use icepick::manifest::schema::manifest_entry_schema_v2;
-/// let schema = manifest_entry_schema_v2();
-/// assert!(schema.is_ok());
-/// ```
-pub fn manifest_entry_schema_v2() -> Result<Schema, apache_avro::Error> {
-    let schema_json = r#"{
+/// The embedded `r102` partition record is generated dynamically — one Avro
+/// field per partition spec field, named by field id, typed via the partition
+/// transform's result type. Readers (Trino, DuckDB) consult the embedded
+/// schema, so each manifest carries the schema it was written against.
+pub fn manifest_entry_schema_v2(
+    partition_spec: &PartitionSpec,
+    iceberg_schema: &IcebergSchema,
+) -> Result<Schema> {
+    let partition_fields_json = build_partition_record_fields_json(partition_spec, iceberg_schema)?;
+
+    let schema_json = SCHEMA_TEMPLATE.replace("__PARTITION_FIELDS__", &partition_fields_json);
+
+    Schema::parse_str(&schema_json).map_err(|e| {
+        crate::error::Error::invalid_input(format!("Failed to parse manifest entry schema: {}", e))
+    })
+}
+
+fn build_partition_record_fields_json(
+    partition_spec: &PartitionSpec,
+    iceberg_schema: &IcebergSchema,
+) -> Result<String> {
+    let mut parts: Vec<String> = Vec::with_capacity(partition_spec.fields().len());
+    for field in partition_spec.fields() {
+        let result_type = partition_field_result_type(field, iceberg_schema)?;
+        let avro_type = partition_result_avro_name(&result_type)?;
+        parts.push(format!(
+            r#"{{ "name": "{name}", "type": ["null", "{ty}"], "default": null, "field-id": {id} }}"#,
+            name = field.name(),
+            ty = avro_type,
+            id = field.field_id(),
+        ));
+    }
+    Ok(parts.join(","))
+}
+
+const SCHEMA_TEMPLATE: &str = r#"{
   "type": "record",
   "name": "manifest_entry",
   "fields": [
@@ -66,7 +97,7 @@ pub fn manifest_entry_schema_v2() -> Result<Schema, apache_avro::Error> {
             "type": {
               "type": "record",
               "name": "r102",
-              "fields": []
+              "fields": [__PARTITION_FIELDS__]
             },
             "field-id": 102
           },
@@ -265,9 +296,6 @@ pub fn manifest_entry_schema_v2() -> Result<Schema, apache_avro::Error> {
   ]
 }"#;
 
-    Schema::parse_str(schema_json)
-}
-
 /// Returns the Avro schema for manifest lists in Iceberg v2 format
 ///
 /// # Example
@@ -276,7 +304,7 @@ pub fn manifest_entry_schema_v2() -> Result<Schema, apache_avro::Error> {
 /// let schema = manifest_list_schema_v2();
 /// assert!(schema.is_ok());
 /// ```
-pub fn manifest_list_schema_v2() -> Result<Schema, apache_avro::Error> {
+pub fn manifest_list_schema_v2() -> std::result::Result<Schema, apache_avro::Error> {
     let schema_json = r#"{
   "type": "record",
   "name": "manifest_file",

@@ -4,7 +4,7 @@ use crate::error::Result;
 use crate::io::FileIO;
 use crate::manifest::avro::data_file_to_avro;
 use crate::manifest::schema::{manifest_entry_schema_v2, manifest_list_schema_v2};
-use crate::spec::DataFile;
+use crate::spec::{DataFile, PartitionSpec, Schema as IcebergSchema};
 use apache_avro::types::Value;
 use apache_avro::Writer;
 
@@ -89,6 +89,8 @@ pub async fn write_manifest(
     data_files: &[DataFile],
     snapshot_id: i64,
     sequence_number: i64,
+    partition_spec: &PartitionSpec,
+    iceberg_schema: &IcebergSchema,
 ) -> Result<i64> {
     // Convert to entries with Added status
     let entries: Vec<ManifestEntry> = data_files
@@ -99,7 +101,16 @@ pub async fn write_manifest(
         })
         .collect();
 
-    write_manifest_with_entries(file_io, path, &entries, snapshot_id, sequence_number).await
+    write_manifest_with_entries(
+        file_io,
+        path,
+        &entries,
+        snapshot_id,
+        sequence_number,
+        partition_spec,
+        iceberg_schema,
+    )
+    .await
 }
 
 /// Write a manifest file containing data file entries with explicit status
@@ -112,14 +123,16 @@ pub async fn write_manifest_with_entries(
     entries: &[ManifestEntry],
     snapshot_id: i64,
     sequence_number: i64,
+    partition_spec: &PartitionSpec,
+    iceberg_schema: &IcebergSchema,
 ) -> Result<i64> {
-    let schema = manifest_entry_schema_v2()
-        .map_err(|e| crate::error::Error::InvalidInput(format!("Invalid Avro schema: {}", e)))?;
+    let schema = manifest_entry_schema_v2(partition_spec, iceberg_schema)?;
 
     let mut writer = Writer::new(&schema, Vec::new());
 
     for entry in entries {
-        let data_file_value = data_file_to_avro(&entry.data_file)?;
+        let data_file_value =
+            data_file_to_avro(&entry.data_file, partition_spec, iceberg_schema)?;
         let status_value: i32 = entry.status.into();
 
         let avro_entry = Value::Record(vec![

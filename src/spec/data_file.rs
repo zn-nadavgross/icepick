@@ -82,6 +82,13 @@ impl DataFile {
         &self.partition
     }
 
+    /// Replace partition data. Used by compaction to backfill partition values
+    /// on files loaded from `DataFileEntry` (which doesn't carry them) before
+    /// re-emitting them in a manifest entry.
+    pub fn set_partition(&mut self, partition: HashMap<String, String>) {
+        self.partition = partition;
+    }
+
     /// Get file size in bytes
     pub fn file_size_in_bytes(&self) -> i64 {
         self.file_size_in_bytes

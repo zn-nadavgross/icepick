@@ -104,12 +104,14 @@ pub async fn try_commit(
     // single spec this is the only one. For unpartitioned tables, fields() is
     // empty and `partitions` stays []. This count MUST match readers like
     // Trino, which iterate by partition spec field index.
-    let (current_spec_id, current_spec_field_count) = metadata
+    let current_spec = metadata
         .partition_specs()
         .iter()
         .max_by_key(|s| s.spec_id())
-        .map(|s| (s.spec_id(), s.fields().len()))
-        .unwrap_or((0, 0));
+        .cloned()
+        .unwrap_or_else(|| crate::spec::PartitionSpec::new(0, Vec::new()));
+    let current_spec_id = current_spec.spec_id();
+    let current_spec_field_count = current_spec.fields().len();
 
     // Generate IDs
     let snapshot_id = generate_snapshot_id(table);
@@ -158,6 +160,8 @@ pub async fn try_commit(
         &manifest_entries_to_write,
         snapshot_id,
         sequence_number,
+        &current_spec,
+        current_schema,
     )
     .await?;
 

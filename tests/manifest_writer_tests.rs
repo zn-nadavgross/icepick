@@ -3,8 +3,19 @@ use apache_avro::{Schema, Writer};
 use icepick::io::FileIO;
 use icepick::manifest::writer::{write_manifest, write_manifest_list, ManifestListEntry};
 use icepick::reader::ManifestListReader;
-use icepick::spec::DataFile;
+use icepick::spec::{DataFile, PartitionSpec, Schema as IcebergSchema};
 use opendal::Operator;
+
+fn empty_spec() -> PartitionSpec {
+    PartitionSpec::new(0, Vec::new())
+}
+
+fn empty_schema() -> IcebergSchema {
+    IcebergSchema::builder()
+        .with_fields(Vec::new())
+        .build()
+        .unwrap()
+}
 
 #[tokio::test]
 async fn test_write_manifest() {
@@ -20,9 +31,17 @@ async fn test_write_manifest() {
         .unwrap();
 
     let path = "metadata/test-m0.avro";
-    let bytes_written = write_manifest(&file_io, path, &[data_file], 1, 1)
-        .await
-        .unwrap();
+    let bytes_written = write_manifest(
+        &file_io,
+        path,
+        &[data_file],
+        1,
+        1,
+        &empty_spec(),
+        &empty_schema(),
+    )
+    .await
+    .unwrap();
 
     assert!(bytes_written > 0);
 

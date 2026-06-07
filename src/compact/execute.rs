@@ -1,6 +1,7 @@
 //! Compaction execution
 
 use crate::catalog::Catalog;
+use crate::catalog::register::parse_hive_partition_values;
 use crate::compact::options::CompactOptions;
 use crate::compact::plan::{CompactionGroup, CompactionPlan, PartitionPlan};
 use crate::error::{Error, Result};
@@ -154,7 +155,17 @@ async fn execute_partition_compaction(
         let (new_files, bytes_before, bytes_after, records) =
             compact_group(group, table, file_io).await?;
 
-        all_files_to_delete.extend(group.files().iter().cloned());
+        // Files loaded via DataFileEntry have an empty partition map. Backfill
+        // it from each file's own Hive-style path so DELETE manifest entries
+        // carry the same partition tuple as the data they replace.
+        for file in group.files() {
+            let mut cloned = file.clone();
+            let hive = parse_hive_partition_values(file.file_path());
+            if !hive.is_empty() {
+                cloned.set_partition(hive);
+            }
+            all_files_to_delete.push(cloned);
+        }
         all_files_to_add.extend(new_files);
         total_bytes_before += bytes_before;
         total_bytes_after += bytes_after;
@@ -248,12 +259,20 @@ async fn compact_group(
         group.files().len()
     );
 
-    // Extract partition data from the first input file (if any)
-    let partition = group.files().first().map(|f| f.partition());
+    // All files in a group share a partition. Derive the partition tuple from
+    // the first file's Hive-style path so the compacted output carries
+    // matching values in its manifest entry. Without this, the new file has
+    // an empty partition record and engines lose track of which partition it
+    // belongs to.
+    let partition = group
+        .files()
+        .first()
+        .map(|f| parse_hive_partition_values(f.file_path()))
+        .filter(|map| !map.is_empty());
 
     // Write compacted file
     let new_file =
-        write_compacted_parquet(file_io, &output_path, combined_batch, partition).await?;
+        write_compacted_parquet(file_io, &output_path, combined_batch, partition.as_ref()).await?;
     let bytes_after = new_file.file_size_in_bytes() as u64;
 
     Ok((

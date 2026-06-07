@@ -394,11 +394,15 @@ impl FileIO {
     }
 
     /// Write data to a file
-    pub async fn write(&self, path: &str, data: Vec<u8>) -> Result<()> {
+    ///
+    /// Accepts anything convertible into `bytes::Bytes` (including `Vec<u8>`)
+    /// so callers that already hold a `Bytes` — e.g. compaction parsing the
+    /// parquet footer in-memory before uploading — can avoid an extra copy.
+    pub async fn write(&self, path: &str, data: impl Into<bytes::Bytes>) -> Result<()> {
         let operator = self.get_operator_for_path(path).await?;
         let normalized = self.normalize_path(path);
         operator
-            .write(normalized, data)
+            .write(normalized, data.into())
             .await
             .map(|_| ()) // Discard Metadata return value
             .map_err(|e| Error::IoError(format!("Failed to write {}: {}", path, e)))

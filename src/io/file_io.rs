@@ -175,18 +175,19 @@ impl FileIO {
     ///
     /// Converts "s3://bucket/path/to/file" to ("bucket", "path/to/file")
     fn extract_bucket_from_uri(&self, path: &str) -> Result<(String, String)> {
-        if let Some(stripped) = path.strip_prefix("s3://") {
-            if let Some(slash_pos) = stripped.find('/') {
-                let bucket = stripped[..slash_pos].to_string();
-                let path = stripped[slash_pos + 1..].to_string();
-                return Ok((bucket, path));
-            } else {
-                // Just bucket, no path
-                return Ok((stripped.to_string(), String::new()));
+        for prefix in &["s3://", "gs://", "s3a://"] {
+            if let Some(stripped) = path.strip_prefix(prefix) {
+                if let Some(slash_pos) = stripped.find('/') {
+                    let bucket = stripped[..slash_pos].to_string();
+                    let path = stripped[slash_pos + 1..].to_string();
+                    return Ok((bucket, path));
+                } else {
+                    return Ok((stripped.to_string(), String::new()));
+                }
             }
         }
         Err(Error::InvalidInput(format!(
-            "Path does not start with s3://: {}",
+            "Path does not start with s3://, gs://, or s3a://: {}",
             path
         )))
     }
@@ -345,9 +346,14 @@ impl FileIO {
     /// Normalize path by stripping S3 URI prefix if present
     /// Converts "s3://bucket/path/to/file" to "path/to/file"
     fn normalize_path<'a>(&self, path: &'a str) -> &'a str {
-        path.strip_prefix("s3://")
-            .and_then(|stripped| stripped.find('/').map(|pos| &stripped[pos + 1..]))
-            .unwrap_or(path)
+        for prefix in &["s3://", "gs://", "s3a://"] {
+            if let Some(stripped) = path.strip_prefix(prefix) {
+                if let Some(pos) = stripped.find('/') {
+                    return &stripped[pos + 1..];
+                }
+            }
+        }
+        path
     }
 
     /// Read a file completely

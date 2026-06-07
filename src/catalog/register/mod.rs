@@ -20,6 +20,7 @@ pub use introspect::{
     convert_partition_values, infer_partition_values_from_path, introspect_parquet_file,
     parse_hive_partition_values, ParquetIntrospection,
 };
+pub(crate) use introspect::{build_metrics, collect_split_offsets};
 pub use types::{
     DataFileFormat, DataFileInput, DataFileRegistrar, EncryptionMetadata, FileMetrics,
     PartitionValue, RegisterOptions, RegisterResult, SkippedFile, SkippedReason,

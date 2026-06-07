@@ -469,7 +469,7 @@ impl ChunkReader for SuffixChunkReader {
     }
 }
 
-fn build_metrics(metadata: &ParquetMetaData) -> FileMetrics {
+pub(crate) fn build_metrics(metadata: &ParquetMetaData) -> FileMetrics {
     let mut metrics = FileMetrics::default();
 
     for row_group in metadata.row_groups() {
@@ -523,7 +523,7 @@ fn build_metrics(metadata: &ParquetMetaData) -> FileMetrics {
     metrics
 }
 
-fn collect_split_offsets(metadata: &ParquetMetaData) -> Vec<i64> {
+pub(crate) fn collect_split_offsets(metadata: &ParquetMetaData) -> Vec<i64> {
     metadata
         .row_groups()
         .iter()

@@ -379,11 +379,31 @@ async fn write_compacted_parquet(
         .flush()
         .map_err(|e| Error::invalid_input(format!("Failed to flush writer: {}", e)))?;
 
-    let parquet_bytes = writer
+    let parquet_vec = writer
         .into_inner()
         .map_err(|e| Error::invalid_input(format!("Failed to get buffer: {}", e)))?;
 
-    let file_size = parquet_bytes.len() as i64;
+    let file_size = parquet_vec.len() as i64;
+
+    // Parse the footer we just wrote so query engines get column stats and split
+    // offsets on the compacted file — without these, queries with column filters
+    // can't prune row groups and have to read every byte we wrote.
+    let parquet_bytes = bytes::Bytes::from(parquet_vec);
+    let mut metadata_reader = parquet::file::metadata::ParquetMetaDataReader::new();
+    metadata_reader.try_parse(&parquet_bytes).map_err(|e| {
+        Error::invalid_input(format!(
+            "Failed to parse Parquet footer for {}: {}",
+            path, e
+        ))
+    })?;
+    let metadata = metadata_reader.finish().map_err(|e| {
+        Error::invalid_input(format!(
+            "Failed to finish Parquet metadata for {}: {}",
+            path, e
+        ))
+    })?;
+    let metrics = crate::catalog::register::build_metrics(&metadata);
+    let split_offsets = crate::catalog::register::collect_split_offsets(&metadata);
 
     file_io.write(path, parquet_bytes).await?;
 
@@ -392,6 +412,25 @@ async fn write_compacted_parquet(
         .with_file_format("PARQUET")
         .with_record_count(record_count)
         .with_file_size_in_bytes(file_size);
+
+    if !metrics.column_sizes.is_empty() {
+        builder = builder.with_column_sizes(metrics.column_sizes);
+    }
+    if !metrics.value_counts.is_empty() {
+        builder = builder.with_value_counts(metrics.value_counts);
+    }
+    if !metrics.null_value_counts.is_empty() {
+        builder = builder.with_null_value_counts(metrics.null_value_counts);
+    }
+    if !metrics.lower_bounds.is_empty() {
+        builder = builder.with_lower_bounds(metrics.lower_bounds);
+    }
+    if !metrics.upper_bounds.is_empty() {
+        builder = builder.with_upper_bounds(metrics.upper_bounds);
+    }
+    if !split_offsets.is_empty() {
+        builder = builder.with_split_offsets(split_offsets);
+    }
 
     if let Some(partition_data) = partition {
         builder = builder.with_partition(partition_data.clone());

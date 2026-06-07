@@ -130,6 +130,43 @@ pub async fn write_manifest_with_entries(
 
     let mut writer = Writer::new(&schema, Vec::new());
 
+    // Iceberg's ManifestReader pulls table schema and partition spec from the
+    // Avro file's user metadata; without these keys Trino's iceberg lib NPEs
+    // in SchemaParser.fromJson when listing the table's $files.
+    let schema_json = serde_json::to_string(iceberg_schema).map_err(|e| {
+        crate::error::Error::InvalidInput(format!("Failed to serialize schema: {}", e))
+    })?;
+    let partition_spec_fields_json = serde_json::to_string(partition_spec.fields())
+        .map_err(|e| {
+            crate::error::Error::InvalidInput(format!(
+                "Failed to serialize partition spec fields: {}",
+                e
+            ))
+        })?;
+    let add_meta = |w: &mut Writer<Vec<u8>>, name: &str, value: String| -> Result<()> {
+        w.add_user_metadata(name.to_string(), value.as_bytes())
+            .map_err(|e| {
+                crate::error::Error::InvalidInput(format!(
+                    "Failed to add Avro user metadata '{}': {}",
+                    name, e
+                ))
+            })?;
+        Ok(())
+    };
+    add_meta(&mut writer, "schema", schema_json)?;
+    add_meta(
+        &mut writer,
+        "partition-spec",
+        partition_spec_fields_json,
+    )?;
+    add_meta(
+        &mut writer,
+        "partition-spec-id",
+        partition_spec.spec_id().to_string(),
+    )?;
+    add_meta(&mut writer, "format-version", "2".to_string())?;
+    add_meta(&mut writer, "content", "data".to_string())?;
+
     for entry in entries {
         let data_file_value =
             data_file_to_avro(&entry.data_file, partition_spec, iceberg_schema)?;

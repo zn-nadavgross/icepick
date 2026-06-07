@@ -7,13 +7,18 @@ use crate::error::{Error, Result};
 use crate::io::FileIO;
 use crate::spec::DataFile;
 use crate::table::Table;
-use arrow::compute::concat_batches;
+use crate::arrow_convert::schema_to_arrow;
+use arrow::array::{new_null_array, ArrayRef};
+use arrow::compute::{cast, concat_batches};
+use arrow::datatypes::{Field, Schema as ArrowSchema, SchemaRef};
+use crate::spec::Schema;
 use arrow::record_batch::RecordBatch;
 use bytes::Bytes;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::arrow::ArrowWriter;
 use parquet::file::properties::WriterProperties;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
@@ -191,15 +196,15 @@ async fn compact_group(
         group.total_bytes()
     );
 
-    // Read all input files and collect batches
-    let mut all_batches: Vec<RecordBatch> = Vec::new();
+    // Read all input files and collect raw batches
+    let mut raw_batches: Vec<RecordBatch> = Vec::new();
 
     for file in group.files() {
         let batches = read_parquet_file(file_io, file.file_path()).await?;
-        all_batches.extend(batches);
+        raw_batches.extend(batches);
     }
 
-    if all_batches.is_empty() {
+    if raw_batches.is_empty() {
         return Err(Error::InvalidInput(format!(
             "Compaction group produced no data from {} input files (total {} bytes). All files may be empty or failed to read.",
             group.files().len(),
@@ -207,11 +212,21 @@ async fn compact_group(
         )));
     }
 
-    // Get the schema from the first batch
-    let schema = all_batches[0].schema();
+    // Files written at different times can diverge in physical type (a column
+    // stored as Int64 in old files vs Date32 in newer ones) AND in column set
+    // (columns added or dropped via schema evolution). Resolve every file against
+    // the table schema: cast columns that are present, null-fill columns that are
+    // absent. Partition columns aren't materialized in data files, so they are
+    // excluded by keying the target off the columns that actually appear.
+    let target_schema = build_target_schema(&raw_batches, table.schema()?)?;
 
-    // Concatenate all batches
-    let combined_batch = concat_batches(&schema, &all_batches)
+    let mut all_batches: Vec<RecordBatch> = Vec::with_capacity(raw_batches.len());
+    for batch in &raw_batches {
+        all_batches.push(normalize_batch(batch, &target_schema)?);
+    }
+
+    // All batches now share the table's target schema
+    let combined_batch = concat_batches(&target_schema, &all_batches)
         .map_err(|e| Error::invalid_input(format!("Failed to concatenate batches: {}", e)))?;
 
     let total_records = combined_batch.num_rows() as u64;
@@ -247,6 +262,68 @@ async fn compact_group(
         bytes_after,
         total_records,
     ))
+}
+
+/// Build the target Arrow schema for concatenation. It is the set of table
+/// schema columns that appear in at least one data file, in table-schema order
+/// with canonical types and field-id metadata. Partition columns never appear in
+/// the data files, so they fall out naturally; columns dropped from the table
+/// schema are not included.
+fn build_target_schema(batches: &[RecordBatch], table_schema: &Schema) -> Result<SchemaRef> {
+    let table_arrow = schema_to_arrow(table_schema)?;
+
+    let mut present: HashSet<String> = HashSet::new();
+    for batch in batches {
+        for field in batch.schema().fields() {
+            present.insert(field.name().clone());
+        }
+    }
+
+    let fields: Vec<Arc<Field>> = table_arrow
+        .fields()
+        .iter()
+        .filter(|f| present.contains(f.name()))
+        .cloned()
+        .collect();
+
+    if fields.is_empty() {
+        return Err(Error::invalid_input(
+            "No data-file columns matched the table schema during compaction".to_string(),
+        ));
+    }
+
+    Ok(Arc::new(ArrowSchema::new(fields)))
+}
+
+/// Resolve a batch against the target schema: cast columns that are present,
+/// null-fill columns that are absent (added by later schema evolution). This lets
+/// files with divergent physical types or column sets be concatenated.
+fn normalize_batch(batch: &RecordBatch, target: &SchemaRef) -> Result<RecordBatch> {
+    let num_rows = batch.num_rows();
+    let mut columns: Vec<ArrayRef> = Vec::with_capacity(target.fields().len());
+
+    for field in target.fields() {
+        match batch.column_by_name(field.name()) {
+            Some(col) if col.data_type() == field.data_type() => columns.push(col.clone()),
+            Some(col) => {
+                let casted = cast(col, field.data_type()).map_err(|e| {
+                    Error::invalid_input(format!(
+                        "Failed to cast column '{}' from {:?} to {:?}: {}",
+                        field.name(),
+                        col.data_type(),
+                        field.data_type(),
+                        e
+                    ))
+                })?;
+                columns.push(casted);
+            }
+            None => columns.push(new_null_array(field.data_type(), num_rows)),
+        }
+    }
+
+    RecordBatch::try_new(target.clone(), columns).map_err(|e| {
+        Error::invalid_input(format!("Failed to rebuild batch during compaction: {}", e))
+    })
 }
 
 /// Read all record batches from a Parquet file

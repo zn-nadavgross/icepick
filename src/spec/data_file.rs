@@ -49,6 +49,18 @@ pub struct DataFile {
     lower_bounds: Option<HashMap<i32, Vec<u8>>>,
     #[serde(rename = "upper-bounds", skip_serializing_if = "Option::is_none")]
     upper_bounds: Option<HashMap<i32, Vec<u8>>>,
+    /// Manifest-entry-level snapshot_id from the entry that originally added
+    /// this file. Iceberg requires DELETE manifest entries to reference the
+    /// adding snapshot's id so readers can match tombstones to live entries;
+    /// without this, Trino sees the DELETE as unrelated and keeps the file
+    /// live (orphan cleanup then refuses to remove it). Not part of the
+    /// Iceberg DataFile JSON spec — skipped from REST catalog wire format.
+    #[serde(skip)]
+    manifest_snapshot_id: Option<i64>,
+    /// Manifest-entry-level file_sequence_number, paired with
+    /// `manifest_snapshot_id` for the same reason.
+    #[serde(skip)]
+    manifest_file_sequence_number: Option<i64>,
 }
 
 impl DataFile {
@@ -132,6 +144,28 @@ impl DataFile {
     /// Get upper bounds
     pub fn upper_bounds(&self) -> Option<&HashMap<i32, Vec<u8>>> {
         self.upper_bounds.as_ref()
+    }
+
+    /// Snapshot id of the manifest entry that originally added this file.
+    pub fn manifest_snapshot_id(&self) -> Option<i64> {
+        self.manifest_snapshot_id
+    }
+
+    /// File sequence number from the manifest entry that originally added this file.
+    pub fn manifest_file_sequence_number(&self) -> Option<i64> {
+        self.manifest_file_sequence_number
+    }
+
+    /// Stamp the originating manifest entry's snapshot_id and
+    /// file_sequence_number on this DataFile so a later DELETE entry can
+    /// reference them.
+    pub fn set_manifest_provenance(
+        &mut self,
+        snapshot_id: Option<i64>,
+        file_sequence_number: Option<i64>,
+    ) {
+        self.manifest_snapshot_id = snapshot_id;
+        self.manifest_file_sequence_number = file_sequence_number;
     }
 }
 
@@ -249,6 +283,8 @@ impl DataFileBuilder {
             equality_ids: self.equality_ids,
             lower_bounds: self.lower_bounds,
             upper_bounds: self.upper_bounds,
+            manifest_snapshot_id: None,
+            manifest_file_sequence_number: None,
         })
     }
 }

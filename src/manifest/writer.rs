@@ -172,11 +172,29 @@ pub async fn write_manifest_with_entries(
             data_file_to_avro(&entry.data_file, partition_spec, iceberg_schema)?;
         let status_value: i32 = entry.status.into();
 
+        // DELETE entries must reference the *original* snapshot_id and
+        // file_sequence_number of the entry that added the file, otherwise
+        // Iceberg readers can't tombstone the file and orphan cleanup keeps
+        // it on disk. ADD entries get the current commit's values.
+        let (entry_snapshot_id, entry_file_seq) = match entry.status {
+            ManifestEntryStatus::Deleted => (
+                entry
+                    .data_file
+                    .manifest_snapshot_id()
+                    .unwrap_or(snapshot_id),
+                entry
+                    .data_file
+                    .manifest_file_sequence_number()
+                    .unwrap_or(sequence_number),
+            ),
+            _ => (snapshot_id, sequence_number),
+        };
+
         let avro_entry = Value::Record(vec![
             ("status".to_string(), Value::Int(status_value)),
             (
                 "snapshot_id".to_string(),
-                Value::Union(1, Box::new(Value::Long(snapshot_id))),
+                Value::Union(1, Box::new(Value::Long(entry_snapshot_id))),
             ),
             (
                 "sequence_number".to_string(),
@@ -184,7 +202,7 @@ pub async fn write_manifest_with_entries(
             ),
             (
                 "file_sequence_number".to_string(),
-                Value::Union(1, Box::new(Value::Long(sequence_number))),
+                Value::Union(1, Box::new(Value::Long(entry_file_seq))),
             ),
             ("data_file".to_string(), data_file_value),
         ]);

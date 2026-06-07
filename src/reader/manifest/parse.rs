@@ -54,20 +54,35 @@ pub(super) fn parse_manifest_file_info(fields: Vec<(String, Value)>) -> Result<M
     Ok(info)
 }
 
-/// Extract status and data_file from manifest entry fields
-pub(super) fn extract_manifest_entry_parts(
-    fields: Vec<(String, Value)>,
-) -> (Option<i32>, Option<Value>) {
-    let mut status = None;
-    let mut data_file_value = None;
+/// Components extracted from a top-level manifest entry record.
+pub(super) struct ManifestEntryParts {
+    pub status: Option<i32>,
+    pub snapshot_id: Option<i64>,
+    pub file_sequence_number: Option<i64>,
+    pub data_file: Option<Value>,
+}
+
+/// Extract status, snapshot_id, file_sequence_number, and data_file from a
+/// manifest entry record. snapshot_id and file_sequence_number live on the
+/// entry, not inside the data_file sub-record; compaction needs them so its
+/// DELETE entries can reference the adding entry.
+pub(super) fn extract_manifest_entry_parts(fields: Vec<(String, Value)>) -> ManifestEntryParts {
+    let mut parts = ManifestEntryParts {
+        status: None,
+        snapshot_id: None,
+        file_sequence_number: None,
+        data_file: None,
+    };
     for (name, field_value) in fields {
         match name.as_str() {
-            "status" => status = extract_int(&field_value),
-            "data_file" => data_file_value = Some(field_value),
+            "status" => parts.status = extract_int(&field_value),
+            "snapshot_id" => parts.snapshot_id = extract_long(&field_value),
+            "file_sequence_number" => parts.file_sequence_number = extract_long(&field_value),
+            "data_file" => parts.data_file = Some(field_value),
             _ => {}
         }
     }
-    (status, data_file_value)
+    parts
 }
 
 /// Parse data file basic fields from Avro record
@@ -92,6 +107,8 @@ pub(super) fn parse_data_file_basic(fields: Vec<(String, Value)>) -> Result<Data
         file_format: file_format.ok_or_else(|| missing_field_error("file_format"))?,
         record_count: record_count.ok_or_else(|| missing_field_error("record_count"))?,
         file_size_in_bytes: file_size.ok_or_else(|| missing_field_error("file_size_in_bytes"))?,
+        snapshot_id: None,
+        file_sequence_number: None,
     })
 }
 
@@ -99,11 +116,11 @@ pub(super) fn parse_data_file_basic(fields: Vec<(String, Value)>) -> Result<Data
 pub(super) fn parse_manifest_entry_with_stats(
     fields: Vec<(String, Value)>,
 ) -> Result<Option<DataFileStats>> {
-    let (status, data_file_value) = extract_manifest_entry_parts(fields);
-    if status == Some(2) {
+    let parts = extract_manifest_entry_parts(fields);
+    if parts.status == Some(2) {
         return Ok(None);
     }
-    if let Some(Value::Record(data_file_fields)) = data_file_value {
+    if let Some(Value::Record(data_file_fields)) = parts.data_file {
         Ok(Some(parse_data_file_stats(data_file_fields)?))
     } else {
         Err(missing_field_error("data_file"))
@@ -112,13 +129,16 @@ pub(super) fn parse_manifest_entry_with_stats(
 
 /// Parse a manifest entry and extract data file entry if not deleted
 pub(super) fn parse_manifest_entry(fields: Vec<(String, Value)>) -> Result<Option<DataFileEntry>> {
-    let (status, data_file_value) = extract_manifest_entry_parts(fields);
-    if status == Some(2) {
+    let parts = extract_manifest_entry_parts(fields);
+    if parts.status == Some(2) {
         return Ok(None);
     }
 
-    if let Some(Value::Record(data_file_fields)) = data_file_value {
-        Ok(Some(parse_data_file_basic(data_file_fields)?))
+    if let Some(Value::Record(data_file_fields)) = parts.data_file {
+        let mut entry = parse_data_file_basic(data_file_fields)?;
+        entry.snapshot_id = parts.snapshot_id;
+        entry.file_sequence_number = parts.file_sequence_number;
+        Ok(Some(entry))
     } else {
         Err(missing_field_error("data_file"))
     }

@@ -150,6 +150,8 @@ impl<'a> TableScan<'a> {
                 record_count: f.record_count,
                 file_size_in_bytes: f.file_size_in_bytes,
                 file_format: f.file_format,
+                snapshot_id: None,
+                file_sequence_number: None,
             })
             .collect();
 

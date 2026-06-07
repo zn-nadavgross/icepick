@@ -109,16 +109,25 @@ impl CompactionPlan {
             }
         };
 
-        // Convert DataFileEntry to DataFile for easier manipulation
+        // Convert DataFileEntry to DataFile for easier manipulation. Carry
+        // the entry's snapshot_id / file_sequence_number on the DataFile so a
+        // later DELETE manifest entry can reference the adding entry; without
+        // that, Iceberg readers can't tombstone the file and orphan cleanup
+        // refuses to delete it.
         let data_files: Vec<DataFile> = files
             .into_iter()
             .map(|entry| {
-                DataFile::builder()
+                let mut data_file = DataFile::builder()
                     .with_file_path(&entry.file_path)
                     .with_file_format(&entry.file_format)
                     .with_record_count(entry.record_count)
                     .with_file_size_in_bytes(entry.file_size_in_bytes)
-                    .build()
+                    .build()?;
+                data_file.set_manifest_provenance(
+                    entry.snapshot_id,
+                    entry.file_sequence_number,
+                );
+                Ok(data_file)
             })
             .collect::<Result<Vec<_>>>()?;
 

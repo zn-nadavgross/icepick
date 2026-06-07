@@ -23,6 +23,12 @@ pub struct DataFileEntry {
     pub file_size_in_bytes: i64,
     /// File format (e.g., "PARQUET")
     pub file_format: String,
+    /// Snapshot id from the manifest entry that owns this file. Needed by
+    /// compaction to emit valid DELETE manifest entries that reference the
+    /// adding snapshot; otherwise readers won't tombstone the file.
+    pub snapshot_id: Option<i64>,
+    /// File sequence number from the manifest entry, paired with `snapshot_id`.
+    pub file_sequence_number: Option<i64>,
 }
 
 /// Enhanced data file entry with partition and statistics info for pruning

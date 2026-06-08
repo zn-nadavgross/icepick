@@ -33,7 +33,7 @@ fn build_partition_record_fields_json(
         let result_type = partition_field_result_type(field, iceberg_schema)?;
         let avro_type = partition_result_avro_name(&result_type)?;
         parts.push(format!(
-            r#"{{ "name": "{name}", "type": ["null", "{ty}"], "default": null, "field-id": {id} }}"#,
+            r#"{{ "name": "{name}", "type": ["null", {ty}], "default": null, "field-id": {id} }}"#,
             name = field.name(),
             ty = avro_type,
             id = field.field_id(),

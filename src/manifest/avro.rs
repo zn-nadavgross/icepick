@@ -263,7 +263,7 @@ pub(crate) fn partition_string_to_avro(raw: &str, result_type: &PrimitiveType) -
             raw.parse::<f64>()
                 .map_err(|e| Error::invalid_input(format!("double '{}': {}", raw, e)))?,
         ),
-        PrimitiveType::Date => Value::Int(parse_date_days(raw)?),
+        PrimitiveType::Date => Value::Date(parse_date_days(raw)?),
         PrimitiveType::String | PrimitiveType::Uuid => Value::String(raw.to_string()),
         other => {
             return Err(Error::invalid_input(format!(
@@ -286,20 +286,28 @@ fn parse_date_days(raw: &str) -> Result<i32> {
         .map_err(|e| Error::invalid_input(format!("date '{}': {}", raw, e)))
 }
 
-/// Avro primitive type name (for embedding into the partition record schema)
-/// for a given Iceberg partition result type.
+/// JSON fragment for the Avro type of a partition field. Returns either a
+/// bare primitive name (`"int"`, `"long"`, etc.) or a full type object with
+/// `logicalType` annotation for types like Date / Timestamp. The fragment
+/// gets interpolated into the partition record's field schema.
+///
+/// Iceberg manifests written by Trino/Spark mark date and timestamp partition
+/// values with their logical type. apache_avro rejects round-trips when the
+/// source emits `Value::Date` but the target schema declares plain `int` —
+/// the values are physically identical but the type-check is by Value variant.
 pub(crate) fn partition_result_avro_name(result_type: &PrimitiveType) -> Result<&'static str> {
     Ok(match result_type {
-        PrimitiveType::Boolean => "boolean",
-        PrimitiveType::Int | PrimitiveType::Date => "int",
-        PrimitiveType::Long
-        | PrimitiveType::Time
-        | PrimitiveType::Timestamp
-        | PrimitiveType::Timestamptz => "long",
-        PrimitiveType::Float => "float",
-        PrimitiveType::Double => "double",
-        PrimitiveType::String | PrimitiveType::Uuid => "string",
-        PrimitiveType::Binary | PrimitiveType::Fixed(_) => "bytes",
+        PrimitiveType::Boolean => r#""boolean""#,
+        PrimitiveType::Int => r#""int""#,
+        PrimitiveType::Date => r#"{"type":"int","logicalType":"date"}"#,
+        PrimitiveType::Long => r#""long""#,
+        PrimitiveType::Time => r#"{"type":"long","logicalType":"time-micros"}"#,
+        PrimitiveType::Timestamp => r#"{"type":"long","logicalType":"timestamp-micros"}"#,
+        PrimitiveType::Timestamptz => r#"{"type":"long","logicalType":"timestamp-micros"}"#,
+        PrimitiveType::Float => r#""float""#,
+        PrimitiveType::Double => r#""double""#,
+        PrimitiveType::String | PrimitiveType::Uuid => r#""string""#,
+        PrimitiveType::Binary | PrimitiveType::Fixed(_) => r#""bytes""#,
         other => {
             return Err(Error::invalid_input(format!(
                 "Avro mapping not implemented for partition result type {:?}",

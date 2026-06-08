@@ -88,6 +88,14 @@ pub fn data_file_to_avro(
     };
     fields.push(("null_value_counts".to_string(), null_value_counts));
 
+    // nan_value_counts — required by Iceberg v2 spec (field-id 137). icepick
+    // doesn't compute NaN counts so emit null; Trino tolerates that, but the
+    // field MUST be present in the record for the Avro schema to validate.
+    fields.push((
+        "nan_value_counts".to_string(),
+        Value::Union(0, Box::new(Value::Null)),
+    ));
+
     // Optional split offsets
     let split_offsets = if let Some(offsets) = data_file.split_offsets() {
         let array: Vec<Value> = offsets.iter().map(|offset| Value::Long(*offset)).collect();
@@ -154,6 +162,14 @@ pub fn data_file_to_avro(
     fields.push((
         "sort_order_id".to_string(),
         Value::Union(1, Box::new(Value::Int(0))),
+    ));
+
+    // referenced_data_file — used by v2 position delete files (field-id 143).
+    // Data file entries don't reference another file, but the field must be
+    // present in the record to satisfy the schema.
+    fields.push((
+        "referenced_data_file".to_string(),
+        Value::Union(0, Box::new(Value::Null)),
     ));
 
     Ok(Value::Record(fields))

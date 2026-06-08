@@ -196,6 +196,34 @@ const SCHEMA_TEMPLATE: &str = r#"{
             "field-id": 110
           },
           {
+            "name": "nan_value_counts",
+            "type": [
+              "null",
+              {
+                "type": "array",
+                "logicalType": "map",
+                "items": {
+                  "type": "record",
+                  "name": "k138_v139",
+                  "fields": [
+                    {
+                      "name": "key",
+                      "type": "int",
+                      "field-id": 138
+                    },
+                    {
+                      "name": "value",
+                      "type": "long",
+                      "field-id": 139
+                    }
+                  ]
+                }
+              }
+            ],
+            "default": null,
+            "field-id": 137
+          },
+          {
             "name": "lower_bounds",
             "type": [
               "null",
@@ -288,6 +316,12 @@ const SCHEMA_TEMPLATE: &str = r#"{
             "type": ["null", "int"],
             "default": null,
             "field-id": 140
+          },
+          {
+            "name": "referenced_data_file",
+            "type": ["null", "string"],
+            "default": null,
+            "field-id": 143
           }
         ]
       },

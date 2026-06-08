@@ -50,6 +50,13 @@ pub struct RewriteResult {
 /// report the result. Surviving entries are marked `EXISTING` (status=0)
 /// regardless of their original status — they belong to a prior snapshot
 /// from this commit's perspective.
+///
+/// Iceberg v2 lets ADDED manifest entries leave `snapshot_id` and
+/// `sequence_number` null because readers inherit those from the manifest's
+/// owning snapshot. EXISTING entries must carry explicit values, so the
+/// rewriter materializes nulls from `inherited_snapshot_id` /
+/// `inherited_sequence_number` (sourced from the parent manifest_list
+/// entry's `added_snapshot_id` and `sequence_number`).
 pub async fn rewrite_manifest(
     file_io: &FileIO,
     source_path: &str,
@@ -57,6 +64,8 @@ pub async fn rewrite_manifest(
     drop_file_paths: &HashSet<String>,
     partition_spec: &PartitionSpec,
     iceberg_schema: &IcebergSchema,
+    inherited_snapshot_id: i64,
+    inherited_sequence_number: i64,
 ) -> Result<RewriteOutcome> {
     let bytes = file_io.read(source_path).await?;
     let reader = AvroReader::new(&bytes[..]).map_err(|e| {
@@ -96,17 +105,23 @@ pub async fn rewrite_manifest(
             continue;
         }
 
-        // Surviving entries become EXISTING in the rewritten manifest. The
-        // data sequence/snapshot fields on the entry stay intact so readers
-        // still see the file's original lineage; only its status changes.
+        // Surviving entries become EXISTING in the rewritten manifest.
+        // Materialize any inherited (null) snapshot_id / sequence_number /
+        // file_sequence_number from the parent manifest list entry — readers
+        // require these to be explicit on non-ADDED entries.
         let new_fields: Vec<(String, Value)> = fields
             .into_iter()
-            .map(|(name, val)| {
-                if name == "status" {
-                    (name, Value::Int(0))
-                } else {
-                    (name, val)
-                }
+            .map(|(name, val)| match name.as_str() {
+                "status" => (name, Value::Int(0)),
+                "snapshot_id" => (
+                    name,
+                    materialize_long(val, inherited_snapshot_id),
+                ),
+                "sequence_number" | "file_sequence_number" => (
+                    name,
+                    materialize_long(val, inherited_sequence_number),
+                ),
+                _ => (name, val),
             })
             .collect();
 
@@ -137,6 +152,20 @@ pub async fn rewrite_manifest(
         existing_files_count,
         existing_rows_count,
     }))
+}
+
+/// If `val` is a null Avro union, return a union holding `fallback` as a
+/// long. Otherwise return `val` unchanged. Used to fill in inherited fields
+/// when promoting an ADDED entry to EXISTING.
+fn materialize_long(val: Value, fallback: i64) -> Value {
+    match &val {
+        Value::Union(idx, boxed) => match boxed.as_ref() {
+            Value::Null => Value::Union(1, Box::new(Value::Long(fallback))),
+            _ => Value::Union(*idx, boxed.clone()),
+        },
+        Value::Null => Value::Union(1, Box::new(Value::Long(fallback))),
+        _ => val,
+    }
 }
 
 /// Pull the data_file's file_path and record_count out of a manifest entry

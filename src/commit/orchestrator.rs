@@ -229,6 +229,8 @@ pub async fn try_commit(
                 &drop_set,
                 &current_spec,
                 current_schema,
+                parent_info.added_snapshot_id,
+                parent_info.sequence_number,
             )
             .await?
             {
